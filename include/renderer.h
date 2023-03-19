@@ -1,5 +1,6 @@
-#include "d3dx12.h"
+#include <wrl/client.h>
 #include <string>
+#include <d3d12.h>
 #include <dxgi1_6.h>
 
 using Microsoft::WRL::ComPtr;
@@ -25,7 +26,7 @@ private:
 	ComPtr<IDXGIFactory7> m_factory;
 	ComPtr<IDXGIAdapter4> m_adapter;
 	ComPtr<IDXGISwapChain3> m_swapChain;
-	ComPtr<ID3D12Device9> m_device;
+	ComPtr<ID3D12Device8> m_device;
 	ComPtr<ID3D12Resource2> m_renderTargets[FrameCount];
 	ComPtr<ID3D12CommandAllocator> m_commandAllocator;
 	ComPtr<ID3D12CommandQueue> m_commandQueue;

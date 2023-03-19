@@ -50,7 +50,7 @@ void Renderer::Init() {
 			}
 		}
 	}
-	if (FAILED(D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&m_device)))) {
+	if (FAILED(D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&m_device)))) {
 		OutputDebugString("-------------------------Failed to create d3d12Device\n");
 	}
 	
@@ -95,15 +95,14 @@ void Renderer::Init() {
 	}
 	m_rtvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap->GetCPUDescriptorHandleForHeapStart());
-
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
 	for (UINT n = 0; n < FrameCount; n++)
 	{
 		if (FAILED(m_swapChain->GetBuffer(n, IID_PPV_ARGS(&m_renderTargets[n])))) {
 			OutputDebugString("-------------------------Failed to GetBuffer from swapChain\n");
 		}
 		m_device->CreateRenderTargetView(m_renderTargets[n].Get(), NULL, rtvHandle);
-		rtvHandle.Offset(1, m_rtvDescriptorSize);
+		rtvHandle.ptr += m_rtvDescriptorSize;
 	}
 
 	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocator)))) {
@@ -142,10 +141,10 @@ void Renderer::Render() {
 	renderTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 
 	m_commandList->ResourceBarrier(1, &renderTargetBarrier);
-	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_frameIndex, m_rtvDescriptorSize);
-
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle1 = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+	rtvHandle1.ptr += m_frameIndex * m_rtvDescriptorSize;
 	const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-	m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+	m_commandList->ClearRenderTargetView(rtvHandle1, clearColor, 0, nullptr);
 
 	D3D12_RESOURCE_BARRIER presentTargetBarrier = {};
 	presentTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
