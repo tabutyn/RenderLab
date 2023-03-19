@@ -10,12 +10,11 @@ public:
 	~Renderer();
 
 	void Init();
-	void Update();
 	void Render();
 	void Destroy();
 
-	UINT GetWidth() const { return m_width; }
-	UINT GetHeight() const { return m_height; }
+	LONG GetWidth() const { return m_width; }
+	LONG GetHeight() const { return m_height; }
 	const CHAR* GetTitle() const { return m_title.c_str(); }
 
 	void SetWindowHandle(HWND hWnd) { m_hWnd = hWnd; }
@@ -41,7 +40,7 @@ private:
 	UINT m_frameIndex;
 
 	HWND m_hWnd;
-	UINT m_width;
-	UINT m_height;
+	LONG m_width;
+	LONG m_height;
 	std::string m_title;
 };

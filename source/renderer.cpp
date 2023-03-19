@@ -8,6 +8,9 @@ using namespace Microsoft::WRL;
 Renderer::Renderer(UINT width, UINT height, std::string title) :
 	m_rtvDescriptorSize(0),
 	m_frameIndex(0),
+	m_fenceValue(0),
+	m_fenceEvent(0),
+	m_hWnd(0),
 	m_width(width),
 	m_height(height),
 	m_title(title)
@@ -23,13 +26,13 @@ void Renderer::Init() {
 	ComPtr<ID3D12Debug> debugController;
 	if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
 	{
-		OutputDebugString("-----------------------Failed to create ID3D12Debug Interface\n");
+		OutputDebugString("-------------------------Failed to create ID3D12Debug Interface\n");
 	}
 	debugController->EnableDebugLayer();
 
 	if (FAILED(CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&m_factory))))
 	{
-		OutputDebugString("-----------------------Failed to create DXGIFactory7\n");
+		OutputDebugString("-------------------------Failed to create DXGIFactory7\n");
 		return;
 	}
 
@@ -48,14 +51,14 @@ void Renderer::Init() {
 		}
 	}
 	if (FAILED(D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&m_device)))) {
-		OutputDebugString("----------------------Failed to create d3d12Device\n");
+		OutputDebugString("-------------------------Failed to create d3d12Device\n");
 	}
 	
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 	if (FAILED(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_commandQueue)))) {
-		OutputDebugString("---------------------Failed to create d3d12CommandQueue\n");
+		OutputDebugString("-------------------------Failed to create d3d12CommandQueue\n");
 	}
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
@@ -75,11 +78,11 @@ void Renderer::Init() {
 	ComPtr<IDXGISwapChain1> swapChain;
 	
 	if (FAILED(m_factory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hWnd, &swapChainDesc, nullptr, nullptr, &swapChain))) {
-		OutputDebugString("--------------------------Failed to create swap chain\n");
+		OutputDebugString("-------------------------Failed to create swap chain\n");
 	}
 	m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER);
 	if (FAILED(swapChain.As(&m_swapChain))) {
-		OutputDebugString("---------------------Failed to cast IDXGISwapChain1 to IDXGISwapChain3\n");
+		OutputDebugString("-------------------------Failed to cast IDXGISwapChain1 to IDXGISwapChain3\n");
 	}
 	m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
 
@@ -88,7 +91,7 @@ void Renderer::Init() {
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	if (FAILED(m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_rtvHeap)))) {
-		OutputDebugString("---------------------Failed to create rtv descriptor heap.\n");
+		OutputDebugString("-------------------------Failed to create rtv descriptor heap.\n");
 	}
 	m_rtvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
@@ -97,37 +100,85 @@ void Renderer::Init() {
 	for (UINT n = 0; n < FrameCount; n++)
 	{
 		if (FAILED(m_swapChain->GetBuffer(n, IID_PPV_ARGS(&m_renderTargets[n])))) {
-			OutputDebugString("----------------------------------Failed to GetBuffer from swapChain\n");
+			OutputDebugString("-------------------------Failed to GetBuffer from swapChain\n");
 		}
 		m_device->CreateRenderTargetView(m_renderTargets[n].Get(), NULL, rtvHandle);
 		rtvHandle.Offset(1, m_rtvDescriptorSize);
 	}
 
 	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocator)))) {
-		OutputDebugString("-----------------------Failed to create Command Allocator\n");
+		OutputDebugString("-------------------------Failed to create Command Allocator\n");
 	}
 
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
-		OutputDebugString("------------------------Failed to create command list\n");
+		OutputDebugString("-------------------------Failed to create command list\n");
 	}
-	
+
 	if (FAILED(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) {
-		OutputDebugString("------------------------Failed to create fence\n");
+		OutputDebugString("-------------------------Failed to create fence\n");
 	}
 
 	m_fenceValue = 1;
 	m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	if (m_fenceEvent == nullptr) {
-		OutputDebugString("-------------------------Failed to create event for fence");
+		OutputDebugString("-------------------------Failed to create event for fence\n");
 	}
-
-
-}
-
-void Renderer::Update() {
 }
 
 void Renderer::Render() {
+	if (FAILED(m_commandAllocator->Reset())) {
+		OutputDebugString("--------------------------Failed to reset command allocator\n");
+	}
+	if (FAILED(m_commandList->Reset(m_commandAllocator.Get(), m_pipelineState.Get()))) {
+		OutputDebugString("--------------------------Failed to rest command list\n");
+	}
+
+	D3D12_RESOURCE_BARRIER renderTargetBarrier = {};
+	renderTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	renderTargetBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	renderTargetBarrier.Transition.pResource = m_renderTargets[m_frameIndex].Get();
+	renderTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	renderTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+	renderTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+	m_commandList->ResourceBarrier(1, &renderTargetBarrier);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_frameIndex, m_rtvDescriptorSize);
+
+	const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+	m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+
+	D3D12_RESOURCE_BARRIER presentTargetBarrier = {};
+	presentTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	presentTargetBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	presentTargetBarrier.Transition.pResource = m_renderTargets[m_frameIndex].Get();
+	presentTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	presentTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	presentTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+
+	m_commandList->ResourceBarrier(1, &presentTargetBarrier);
+	if (FAILED(m_commandList->Close())) {
+		OutputDebugString("-------------------------Failed to close command list\n");
+	}
+
+	ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
+	m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+	
+	DXGI_PRESENT_PARAMETERS presentParameters = {};
+	presentParameters.DirtyRectsCount = 0;
+	m_swapChain->Present1(1, 0, &presentParameters);
+
+	const UINT64 fence = m_fenceValue;
+	if (FAILED(m_commandQueue->Signal(m_fence.Get(), fence))) {
+		OutputDebugString("-------------------------Failed to signal from command queue\n");
+	}
+	m_fenceValue++;
+
+	if (m_fence->GetCompletedValue() < fence) {
+		m_fence->SetEventOnCompletion(fence, m_fenceEvent);
+		WaitForSingleObject(m_fenceEvent, INFINITE);
+	}
+
+	m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
 }
 
 void Renderer::Destroy() {

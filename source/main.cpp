@@ -20,7 +20,6 @@ LRESULT WindowProc(_In_ HWND hWnd, _In_ UINT uMsg, _In_ WPARAM wParam, _In_ LPAR
 	return 0;
 	case WM_PAINT:
 	{
-		renderer->Update();
 		renderer->Render();
 	}
 	return 0;
