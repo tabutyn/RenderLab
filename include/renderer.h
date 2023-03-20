@@ -25,13 +25,10 @@ public:
 private:
 	static const UINT FrameCount = 2;
 
-	struct {
+	struct Vertex {
 		XMFLOAT3 position;
 		XMFLOAT3 color;
 	};
-
-	D3D12_VIEWPORT m_viewport;
-	D3D12_RECT m_scissorRect;
 
 	ComPtr<IDXGIFactory7> m_factory;
 	ComPtr<IDXGIAdapter4> m_adapter;
@@ -47,15 +44,18 @@ private:
 	ComPtr<ID3D12Fence1> m_fence;
 
 	ComPtr<ID3D12Resource2> m_vertexBuffer;
-	D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView;
+	D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView = { 0, 0, 0 };
 
-	UINT64 m_fenceValue;
-	HANDLE m_fenceEvent;
+	D3D12_VIEWPORT m_viewport;
+	D3D12_RECT m_scissorRect;
 
-	UINT m_rtvDescriptorSize;
-	UINT m_frameIndex;
+	UINT64 m_fenceValue = 0;
+	HANDLE m_fenceEvent = 0;
+	UINT m_frameIndex = 0;
 
-	HWND m_hWnd;
+	UINT m_rtvDescriptorSize = 0;
+
+	HWND m_hWnd = 0;
 	LONG m_width;
 	LONG m_height;
 	std::string m_title;

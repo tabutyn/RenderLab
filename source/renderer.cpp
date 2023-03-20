@@ -6,15 +6,21 @@
 using namespace Microsoft::WRL;
 
 Renderer::Renderer(UINT width, UINT height, std::string title) :
-	m_rtvDescriptorSize(0),
-	m_frameIndex(0),
-	m_fenceValue(0),
-	m_fenceEvent(0),
-	m_hWnd(0),
 	m_width(width),
 	m_height(height),
 	m_title(title)
 {
+	m_viewport.TopLeftX = (FLOAT)0.0f;
+	m_viewport.TopLeftY = (FLOAT)0.0f;
+	m_viewport.Width = static_cast<FLOAT>(width);
+	m_viewport.Height = static_cast<FLOAT>(height);
+	m_viewport.MinDepth = (FLOAT)0.0f;
+	m_viewport.MaxDepth = (FLOAT)1.0f;
+
+	m_scissorRect.left = (LONG)0;
+	m_scissorRect.top = (LONG)0;
+	m_scissorRect.right = (LONG)width;
+	m_scissorRect.bottom = (LONG)height;
 }
 
 Renderer::~Renderer() {
@@ -50,7 +56,7 @@ void Renderer::Init() {
 			}
 		}
 	}
-	if (FAILED(D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&m_device)))) {
+	if (FAILED(D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&m_device)))) {
 		OutputDebugString("-------------------------Failed to create d3d12Device\n");
 	}
 	
@@ -107,6 +113,20 @@ void Renderer::Init() {
 
 	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocator)))) {
 		OutputDebugString("-------------------------Failed to create Command Allocator\n");
+	}
+
+	D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionsedRootSignitureDesc = {};
+	versionsedRootSignitureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_0;
+	versionsedRootSignitureDesc.Desc_1_1.NumParameters = 0;
+	versionsedRootSignitureDesc.Desc_1_1.pParameters = nullptr;
+	versionsedRootSignitureDesc.Desc_1_1.NumStaticSamplers = 0;
+	versionsedRootSignitureDesc.Desc_1_1.pStaticSamplers = nullptr;
+	versionsedRootSignitureDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	ComPtr<ID3DBlob> signature;
+	ComPtr<ID3DBlob> error;
+	if (FAILED(D3D12SerializeVersionedRootSignature(&versionsedRootSignitureDesc, &signature, &error))) {
+		OutputDebugString("-------------------------Failed to serailize versioned root signature");
 	}
 
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
