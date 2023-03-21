@@ -12,6 +12,7 @@ Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInsta
 	m_title(title),
 	m_hInstance(hInstance)
 {
+	m_aspectRatio = static_cast<FLOAT>(width) / static_cast<FLOAT>(height);
 	m_viewport.TopLeftX = (FLOAT)0.0f;
 	m_viewport.TopLeftY = (FLOAT)0.0f;
 	m_viewport.Width = static_cast<FLOAT>(width);
@@ -139,6 +140,7 @@ void Renderer::Init() {
 	if (FAILED(D3D12SerializeVersionedRootSignature(&versionsedRootSignitureDesc, &signature, &error))) {
 		OutputDebugString("-------------------------Failed to serailize versioned root signature\n");
 	}
+
 	if (FAILED(m_device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature)))) {
 		OutputDebugString("-------------------------Failed to create root signature\n");
 	}
@@ -241,12 +243,60 @@ void Renderer::Init() {
 	psoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 
 	if (FAILED(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pipelineState)))) {
-		OutputDebugString("-------------------------Failed to create pipeline state object");
+		OutputDebugString("-------------------------Failed to create pipeline state object\n");
 	}
 
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
 		OutputDebugString("-------------------------Failed to create command list\n");
 	}
+
+	Vertex triangleVertices[] =
+	{
+		{ { 0.0f, 0.25f * m_aspectRatio, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+		{ { 0.25f, -0.25f * m_aspectRatio, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
+		{ { -0.25f, -0.25f * m_aspectRatio, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+	};
+
+	const UINT vertexBufferSize = sizeof(triangleVertices);
+
+	D3D12_HEAP_PROPERTIES heapProperties = {};
+	heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+	heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+	heapProperties.CreationNodeMask = 0;
+	heapProperties.VisibleNodeMask = 0;
+
+	D3D12_RESOURCE_DESC resourceDesc = {};
+	resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	resourceDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+	resourceDesc.Width = vertexBufferSize;
+	resourceDesc.Height = 1;
+	resourceDesc.DepthOrArraySize = 1;
+	resourceDesc.MipLevels = 1;
+	resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+	resourceDesc.SampleDesc.Count = 1;
+	resourceDesc.SampleDesc.Quality = 0;
+	resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+	if (FAILED(m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_vertexBuffer)))) {
+		OutputDebugString("-------------------------Failed to create comitted resource\n");
+	}
+
+	UINT8* pVertexDataBegin;
+	D3D12_RANGE range = {};
+	range.Begin = 0;
+	range.End = 0;
+	if (FAILED(m_vertexBuffer->Map(0, &range, reinterpret_cast<void**>(&pVertexDataBegin)))) {
+		OutputDebugString("-------------------------Failed to map vertex buffer\n");
+	}
+
+	memcpy(pVertexDataBegin, triangleVertices, sizeof(triangleVertices));
+	m_vertexBuffer->Unmap(0, nullptr);
+	
+	m_vertexBufferView.BufferLocation = m_vertexBuffer->GetGPUVirtualAddress();
+	m_vertexBufferView.StrideInBytes = sizeof(Vertex);
+	m_vertexBufferView.SizeInBytes = vertexBufferSize;
 
 	if (FAILED(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) {
 		OutputDebugString("-------------------------Failed to create fence\n");
@@ -263,9 +313,14 @@ void Renderer::Render() {
 	if (FAILED(m_commandAllocator->Reset())) {
 		OutputDebugString("--------------------------Failed to reset command allocator\n");
 	}
+
 	if (FAILED(m_commandList->Reset(m_commandAllocator.Get(), m_pipelineState.Get()))) {
 		OutputDebugString("--------------------------Failed to rest command list\n");
 	}
+
+	m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+	m_commandList->RSSetViewports(1, &m_viewport);
+	m_commandList->RSSetScissorRects(1, &m_scissorRect);
 
 	D3D12_RESOURCE_BARRIER renderTargetBarrier = {};
 	renderTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -274,12 +329,18 @@ void Renderer::Render() {
 	renderTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	renderTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
 	renderTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-
 	m_commandList->ResourceBarrier(1, &renderTargetBarrier);
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle1 = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-	rtvHandle1.ptr += m_frameIndex * m_rtvDescriptorSize;
+
+
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+	rtvHandle.ptr += m_frameIndex * m_rtvDescriptorSize;
+	m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
 	const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-	m_commandList->ClearRenderTargetView(rtvHandle1, clearColor, 0, nullptr);
+	m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+	m_commandList->DrawInstanced(3, 1, 0, 0);
 
 	D3D12_RESOURCE_BARRIER presentTargetBarrier = {};
 	presentTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -288,8 +349,8 @@ void Renderer::Render() {
 	presentTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	presentTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	presentTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-
 	m_commandList->ResourceBarrier(1, &presentTargetBarrier);
+
 	if (FAILED(m_commandList->Close())) {
 		OutputDebugString("-------------------------Failed to close command list\n");
 	}
@@ -299,7 +360,9 @@ void Renderer::Render() {
 	
 	DXGI_PRESENT_PARAMETERS presentParameters = {};
 	presentParameters.DirtyRectsCount = 0;
-	m_swapChain->Present1(1, 0, &presentParameters);
+	if (FAILED(m_swapChain->Present1(1, 0, &presentParameters))) {
+		OutputDebugString("-------------------------Failed to present swap chain\n");
+	}
 
 	const UINT64 fence = m_fenceValue;
 	if (FAILED(m_commandQueue->Signal(m_fence.Get(), fence))) {

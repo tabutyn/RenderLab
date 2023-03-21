@@ -27,7 +27,7 @@ private:
 
 	struct Vertex {
 		XMFLOAT3 position;
-		XMFLOAT3 color;
+		XMFLOAT4 color;
 	};
 
 	ComPtr<IDXGIFactory7> m_factory;
@@ -59,6 +59,7 @@ private:
 	HWND m_hWnd = 0;
 	LONG m_width;
 	LONG m_height;
+	FLOAT m_aspectRatio;
 	std::wstring m_title;
 	std::wstring m_moduleDir;
 	std::wstring m_shaderPath;
