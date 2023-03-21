@@ -156,12 +156,6 @@ void Renderer::Init() {
 		OutputDebugString("------------------------Failed to compile pixel shader\n");
 	}
 
-	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
-	{
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
-	};
-
 	D3D12_SHADER_BYTECODE vsByteCode = {};
 	vsByteCode.pShaderBytecode = vertexShader->GetBufferPointer();
 	vsByteCode.BytecodeLength = vertexShader->GetBufferSize();
@@ -170,11 +164,85 @@ void Renderer::Init() {
 	psByteCode.pShaderBytecode = pixelShader->GetBufferPointer();
 	psByteCode.BytecodeLength = pixelShader->GetBufferSize();
 
+	D3D12_BLEND_DESC blendDesc = {};
+	blendDesc.AlphaToCoverageEnable = FALSE;
+	blendDesc.IndependentBlendEnable = FALSE;
+	blendDesc.RenderTarget[0].BlendEnable = FALSE;
+	blendDesc.RenderTarget[0].LogicOpEnable = FALSE;
+	blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+	blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+	blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].LogicOp = D3D12_LOGIC_OP_NOOP;
+	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	D3D12_RASTERIZER_DESC rasterizerDesc = {};
+	rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
+	rasterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
+	rasterizerDesc.FrontCounterClockwise = FALSE;
+	rasterizerDesc.DepthBias = 0;
+	rasterizerDesc.DepthBiasClamp = 0.0f;
+	rasterizerDesc.SlopeScaledDepthBias = 0.0f;
+	rasterizerDesc.DepthClipEnable = TRUE;
+	rasterizerDesc.MultisampleEnable = FALSE;
+	rasterizerDesc.AntialiasedLineEnable = FALSE;
+	rasterizerDesc.ForcedSampleCount = 0;
+	rasterizerDesc.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+	D3D12_DEPTH_STENCILOP_DESC depthStencilopDesc = {};
+	depthStencilopDesc.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	depthStencilopDesc.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	depthStencilopDesc.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+	depthStencilopDesc.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+
+	D3D12_DEPTH_STENCIL_DESC depthStencilDesc = {};
+	depthStencilDesc.DepthEnable = FALSE;
+	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	depthStencilDesc.StencilEnable = FALSE;
+	depthStencilDesc.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
+	depthStencilDesc.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
+	depthStencilDesc.FrontFace = depthStencilopDesc;
+	depthStencilDesc.BackFace = depthStencilopDesc;
+
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+	};
+
+	DXGI_SAMPLE_DESC sampleDesc = {};
+	sampleDesc.Count = 1;
+	sampleDesc.Quality = 0;
+
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
 	psoDesc.pRootSignature = m_rootSignature.Get();
 	psoDesc.VS = vsByteCode;
 	psoDesc.PS = psByteCode;
+	psoDesc.DS = D3D12_SHADER_BYTECODE(nullptr, 0);
+	psoDesc.HS = D3D12_SHADER_BYTECODE(nullptr, 0);
+	psoDesc.GS = D3D12_SHADER_BYTECODE(nullptr, 0);
+	psoDesc.StreamOutput = D3D12_STREAM_OUTPUT_DESC(nullptr, 0, nullptr, 0, 0);
+	psoDesc.BlendState = blendDesc;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.RasterizerState = rasterizerDesc;
+	psoDesc.DepthStencilState = depthStencilDesc;
+	psoDesc.InputLayout = { inputElementDescs, _countof(inputElementDescs) };
+	psoDesc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc = sampleDesc;
+	psoDesc.NodeMask = 0;
+	psoDesc.CachedPSO = { nullptr, 0 };
+	psoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 
+	if (FAILED(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pipelineState)))) {
+		OutputDebugString("-------------------------Failed to create pipeline state object");
+	}
 
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
 		OutputDebugString("-------------------------Failed to create command list\n");
