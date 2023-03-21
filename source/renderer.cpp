@@ -137,7 +137,10 @@ void Renderer::Init() {
 	ComPtr<ID3DBlob> signature;
 	ComPtr<ID3DBlob> error;
 	if (FAILED(D3D12SerializeVersionedRootSignature(&versionsedRootSignitureDesc, &signature, &error))) {
-		OutputDebugString("-------------------------Failed to serailize versioned root signature");
+		OutputDebugString("-------------------------Failed to serailize versioned root signature\n");
+	}
+	if (FAILED(m_device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature)))) {
+		OutputDebugString("-------------------------Failed to create root signature\n");
 	}
 
 	ComPtr<ID3DBlob> vertexShader;
@@ -146,11 +149,11 @@ void Renderer::Init() {
 	UINT compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 
 	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, nullptr))) {
-		OutputDebugString("------------------------Failed to compile vertex shader");
+		OutputDebugString("------------------------Failed to compile vertex shader\n");
 	}
 
 	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, nullptr))) {
-		OutputDebugString("------------------------Failed to compile pixel shader");
+		OutputDebugString("------------------------Failed to compile pixel shader\n");
 	}
 
 	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
@@ -158,6 +161,20 @@ void Renderer::Init() {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
 	};
+
+	D3D12_SHADER_BYTECODE vsByteCode = {};
+	vsByteCode.pShaderBytecode = vertexShader->GetBufferPointer();
+	vsByteCode.BytecodeLength = vertexShader->GetBufferSize();
+
+	D3D12_SHADER_BYTECODE psByteCode = {};
+	psByteCode.pShaderBytecode = pixelShader->GetBufferPointer();
+	psByteCode.BytecodeLength = pixelShader->GetBufferSize();
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.pRootSignature = m_rootSignature.Get();
+	psoDesc.VS = vsByteCode;
+	psoDesc.PS = psByteCode;
+
 
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
 		OutputDebugString("-------------------------Failed to create command list\n");
