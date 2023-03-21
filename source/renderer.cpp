@@ -2,13 +2,15 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <cmath>
+#include <string.h>
 
 using namespace Microsoft::WRL;
 
-Renderer::Renderer(UINT width, UINT height, std::string title) :
+Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInstance) :
 	m_width(width),
 	m_height(height),
-	m_title(title)
+	m_title(title),
+	m_hInstance(hInstance)
 {
 	m_viewport.TopLeftX = (FLOAT)0.0f;
 	m_viewport.TopLeftY = (FLOAT)0.0f;
@@ -21,6 +23,15 @@ Renderer::Renderer(UINT width, UINT height, std::string title) :
 	m_scissorRect.top = (LONG)0;
 	m_scissorRect.right = (LONG)width;
 	m_scissorRect.bottom = (LONG)height;
+
+	WCHAR moduleName[512];
+	memset(moduleName, 0, _countof(moduleName));
+	GetModuleFileNameW(NULL, moduleName, _countof(moduleName));
+
+	WCHAR* lastBackslash = wcsrchr(moduleName, L'\\');
+	*(lastBackslash + 1) = '\0';
+	m_moduleDir.append(moduleName);
+	m_shaderPath = m_moduleDir + L"shaders.hlsl";
 }
 
 Renderer::~Renderer() {
@@ -116,7 +127,7 @@ void Renderer::Init() {
 	}
 
 	D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionsedRootSignitureDesc = {};
-	versionsedRootSignitureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_0;
+	versionsedRootSignitureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
 	versionsedRootSignitureDesc.Desc_1_1.NumParameters = 0;
 	versionsedRootSignitureDesc.Desc_1_1.pParameters = nullptr;
 	versionsedRootSignitureDesc.Desc_1_1.NumStaticSamplers = 0;
@@ -128,6 +139,25 @@ void Renderer::Init() {
 	if (FAILED(D3D12SerializeVersionedRootSignature(&versionsedRootSignitureDesc, &signature, &error))) {
 		OutputDebugString("-------------------------Failed to serailize versioned root signature");
 	}
+
+	ComPtr<ID3DBlob> vertexShader;
+	ComPtr<ID3DBlob> pixelShader;
+
+	UINT compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+
+	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, nullptr))) {
+		OutputDebugString("------------------------Failed to compile vertex shader");
+	}
+
+	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, nullptr))) {
+		OutputDebugString("------------------------Failed to compile pixel shader");
+	}
+
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+	};
 
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
 		OutputDebugString("-------------------------Failed to create command list\n");

@@ -3,13 +3,14 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <DirectXMath.h>
+#include <D3Dcompiler.h>
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
 class Renderer {
 public:
-	Renderer(UINT width, UINT height, std::string title);
+	Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInstance);
 	~Renderer();
 
 	void Init();
@@ -18,8 +19,7 @@ public:
 
 	LONG GetWidth() const { return m_width; }
 	LONG GetHeight() const { return m_height; }
-	const CHAR* GetTitle() const { return m_title.c_str(); }
-
+	const WCHAR* GetTitle() const { return m_title.c_str(); }
 	void SetWindowHandle(HWND hWnd) { m_hWnd = hWnd; }
 
 private:
@@ -55,8 +55,11 @@ private:
 
 	UINT m_rtvDescriptorSize = 0;
 
+	HINSTANCE m_hInstance = 0;
 	HWND m_hWnd = 0;
 	LONG m_width;
 	LONG m_height;
-	std::string m_title;
+	std::wstring m_title;
+	std::wstring m_moduleDir;
+	std::wstring m_shaderPath;
 };
