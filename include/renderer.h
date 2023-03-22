@@ -5,6 +5,9 @@
 #include <DirectXMath.h>
 #include <D3Dcompiler.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
@@ -24,10 +27,13 @@ public:
 
 private:
 	static const UINT FrameCount = 2;
+	static const UINT TextureWidth = 256;
+	static const UINT TextureHeight = 256;
+	static const UINT TexturePixelSize = 4;
 
 	struct Vertex {
 		XMFLOAT3 position;
-		XMFLOAT4 color;
+		XMFLOAT2 uv;
 	};
 
 	ComPtr<IDXGIFactory7> m_factory;
@@ -39,12 +45,14 @@ private:
 	ComPtr<ID3D12CommandQueue> m_commandQueue;
 	ComPtr<ID3D12RootSignature> m_rootSignature;
 	ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
+	ComPtr<ID3D12DescriptorHeap> m_srvHeap;
 	ComPtr<ID3D12PipelineState> m_pipelineState;
 	ComPtr<ID3D12GraphicsCommandList> m_commandList;
 	ComPtr<ID3D12Fence1> m_fence;
 
 	ComPtr<ID3D12Resource2> m_vertexBuffer;
 	D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView = { 0, 0, 0 };
+	ComPtr<ID3D12Resource2> m_texture;
 
 	D3D12_VIEWPORT m_viewport;
 	D3D12_RECT m_scissorRect;

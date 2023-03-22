@@ -33,6 +33,7 @@ Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInsta
 	*(lastBackslash + 1) = '\0';
 	m_moduleDir.append(moduleName);
 	m_shaderPath = m_moduleDir + L"shaders.hlsl";
+	stbi_load()
 }
 
 Renderer::~Renderer() {
