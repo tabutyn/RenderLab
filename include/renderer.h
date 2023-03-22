@@ -4,9 +4,10 @@
 #include <dxgi1_6.h>
 #include <DirectXMath.h>
 #include <D3Dcompiler.h>
-
-#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include "stb_image_write.h"
+#include "tiny_gltf.h"
+#include "json.hpp"
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;

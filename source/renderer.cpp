@@ -4,6 +4,13 @@
 #include <cmath>
 #include <string.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+
 using namespace Microsoft::WRL;
 
 Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInstance) :
@@ -33,7 +40,6 @@ Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInsta
 	*(lastBackslash + 1) = '\0';
 	m_moduleDir.append(moduleName);
 	m_shaderPath = m_moduleDir + L"shaders.hlsl";
-	stbi_load()
 }
 
 Renderer::~Renderer() {
@@ -253,9 +259,9 @@ void Renderer::Init() {
 
 	Vertex triangleVertices[] =
 	{
-		{ { 0.0f, 0.25f * m_aspectRatio, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-		{ { 0.25f, -0.25f * m_aspectRatio, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-		{ { -0.25f, -0.25f * m_aspectRatio, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+		{ { 0.0f, 0.25f * m_aspectRatio, 0.0f }, { 0.0f, 1.0f } },
+		{ { 0.25f, -0.25f * m_aspectRatio, 0.0f }, { 0.0f, 1.0f } },
+		{ { -0.25f, -0.25f * m_aspectRatio, 0.0f }, { 1.0f, 1.0f } }
 	};
 
 	const UINT vertexBufferSize = sizeof(triangleVertices);
