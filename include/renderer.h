@@ -1,11 +1,12 @@
+
+#define NOMINMAX
 #include <wrl/client.h>
 #include <string>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <DirectXMath.h>
 #include <D3Dcompiler.h>
-#include "stb_image.h"
-#include "stb_image_write.h"
+#include <cmath>
 #include "tiny_gltf.h"
 #include "json.hpp"
 
@@ -31,6 +32,9 @@ private:
 	static const UINT TextureWidth = 256;
 	static const UINT TextureHeight = 256;
 	static const UINT TexturePixelSize = 4;
+
+	tinygltf::TinyGLTF gltfContext;
+	tinygltf::Model gltfModel;
 
 	struct Vertex {
 		XMFLOAT3 position;
@@ -72,4 +76,5 @@ private:
 	std::wstring m_title;
 	std::wstring m_moduleDir;
 	std::wstring m_shaderPath;
+	std::wstring m_modelPath;
 };

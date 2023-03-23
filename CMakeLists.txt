@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.26)
 project(RenderLab)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 11)
 
 set(SOURCE_FILES source/main.cpp source/renderer.cpp)
 
@@ -17,6 +17,12 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E copy
                 ${CMAKE_SOURCE_DIR}/source/shaders.hlsl
                 ${CMAKE_BINARY_DIR}/$<CONFIG>/shaders.hlsl)
+                
+add_custom_command(
+        TARGET RenderLab POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory 
+                ${CMAKE_SOURCE_DIR}/tinygltf/models/Cube
+                ${CMAKE_BINARY_DIR}/$<CONFIG>/Cube)
 
 add_custom_target(shaders
     SOURCES source/shaders.hlsl)

@@ -1,15 +1,17 @@
 #include "renderer.h"
-#include <d3d12.h>
-#include <dxgi1_6.h>
-#include <cmath>
-#include <string.h>
 
+#define GLFW_EXPOSE_NATIVE_WIN32
+#define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#define STBI_MSC_SECURE_CRT
+#include "tiny_gltf.h"
 
+#undef GLFW_EXPOSE_NATIVE_WIN32
+#undef TINYGLTF_IMPLEMENTATION
+#undef STBI_MSC_SECURE_CRT
+#undef STB_IMAGE_IMPLEMENTATION
+#undef STB_IMAGE_WRITE_IMPLEMENTATION
 
 using namespace Microsoft::WRL;
 
@@ -40,6 +42,20 @@ Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInsta
 	*(lastBackslash + 1) = '\0';
 	m_moduleDir.append(moduleName);
 	m_shaderPath = m_moduleDir + L"shaders.hlsl";
+
+	std::string error;
+	std::string warning;
+	m_modelPath = m_moduleDir + L"Cube\\Cube.gltf";
+	std::string modelPath(m_modelPath.begin(), m_modelPath.end());
+
+	gltfContext.LoadASCIIFromFile(&gltfModel, &error, &warning, modelPath.c_str());
+	if (!error.empty()) {
+		OutputDebugString(error.c_str());
+	}
+	if (!warning.empty()) {
+		OutputDebugString(error.c_str());
+	}
+
 }
 
 Renderer::~Renderer() {
@@ -173,6 +189,17 @@ void Renderer::Init() {
 	psByteCode.pShaderBytecode = pixelShader->GetBufferPointer();
 	psByteCode.BytecodeLength = pixelShader->GetBufferSize();
 
+	D3D12_SHADER_BYTECODE nullBytecode = {};
+	nullBytecode.pShaderBytecode = nullptr;
+	nullBytecode.BytecodeLength = 0;
+
+	D3D12_STREAM_OUTPUT_DESC nullStreamOutputDesc = {};
+	nullStreamOutputDesc.pSODeclaration = nullptr;
+	nullStreamOutputDesc.NumEntries = 0;
+	nullStreamOutputDesc.pBufferStrides = nullptr;
+	nullStreamOutputDesc.NumStrides = 0;
+	nullStreamOutputDesc.RasterizedStream = 0;
+
 	D3D12_BLEND_DESC blendDesc = {};
 	blendDesc.AlphaToCoverageEnable = FALSE;
 	blendDesc.IndependentBlendEnable = FALSE;
@@ -226,14 +253,16 @@ void Renderer::Init() {
 	sampleDesc.Count = 1;
 	sampleDesc.Quality = 0;
 
+
+
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
 	psoDesc.pRootSignature = m_rootSignature.Get();
 	psoDesc.VS = vsByteCode;
 	psoDesc.PS = psByteCode;
-	psoDesc.DS = D3D12_SHADER_BYTECODE(nullptr, 0);
-	psoDesc.HS = D3D12_SHADER_BYTECODE(nullptr, 0);
-	psoDesc.GS = D3D12_SHADER_BYTECODE(nullptr, 0);
-	psoDesc.StreamOutput = D3D12_STREAM_OUTPUT_DESC(nullptr, 0, nullptr, 0, 0);
+	psoDesc.DS = nullBytecode;
+	psoDesc.HS = nullBytecode;
+	psoDesc.GS = nullBytecode;
+	psoDesc.StreamOutput = nullStreamOutputDesc;
 	psoDesc.BlendState = blendDesc;
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.RasterizerState = rasterizerDesc;
