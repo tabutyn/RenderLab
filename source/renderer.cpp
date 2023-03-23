@@ -53,7 +53,7 @@ Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInsta
 		OutputDebugString(error.c_str());
 	}
 	if (!warning.empty()) {
-		OutputDebugString(error.c_str());
+		OutputDebugString(warning.c_str());
 	}
 
 }
@@ -98,8 +98,22 @@ void Renderer::Init() {
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-	if (FAILED(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_commandQueue)))) {
-		OutputDebugString("-------------------------Failed to create d3d12CommandQueue\n");
+	if (FAILED(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_directCommandQueue)))) {
+		OutputDebugString("-------------------------Failed to create direct d3d12CommandQueue\n");
+	}
+
+	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+	if (FAILED(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_copyCommandQueue)))) {
+		OutputDebugString("-------------------------Failed to create copy d3d12CommandQueue\n");
+	}
+
+	if (FAILED(m_device->CreateFence(m_directFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_directFence)))) {
+		OutputDebugString("-------------------------Failed to create direct fence\n");
+	}
+
+	if (FAILED(m_device->CreateFence(m_copyFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_copyFence)))) {
+		OutputDebugString("-------------------------Failed to create copy fence\n");
 	}
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
@@ -117,38 +131,123 @@ void Renderer::Init() {
 	swapChainDesc.Flags = 0;
 
 	ComPtr<IDXGISwapChain1> swapChain;
-	
-	if (FAILED(m_factory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hWnd, &swapChainDesc, nullptr, nullptr, &swapChain))) {
+	if (FAILED(m_factory->CreateSwapChainForHwnd(m_directCommandQueue.Get(), m_hWnd, &swapChainDesc, nullptr, nullptr, &swapChain))) {
 		OutputDebugString("-------------------------Failed to create swap chain\n");
 	}
-	m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER);
 	if (FAILED(swapChain.As(&m_swapChain))) {
 		OutputDebugString("-------------------------Failed to cast IDXGISwapChain1 to IDXGISwapChain3\n");
 	}
-	m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
+	m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER);
 
-	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.NumDescriptors = FrameCount;
-	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-	if (FAILED(m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_rtvHeap)))) {
-		OutputDebugString("-------------------------Failed to create rtv descriptor heap.\n");
-	}
-	m_rtvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-	for (UINT n = 0; n < FrameCount; n++)
-	{
-		if (FAILED(m_swapChain->GetBuffer(n, IID_PPV_ARGS(&m_renderTargets[n])))) {
-			OutputDebugString("-------------------------Failed to GetBuffer from swapChain\n");
+	for (UINT n = 0; n < FrameCount; ++n) {
+		if (FAILED(m_swapChain->GetBuffer(n, IID_PPV_ARGS(&m_swapChainBuffers[n])))) {
+			OutputDebugString("-------------------------Failed to get swapChain buffer\n");
 		}
-		m_device->CreateRenderTargetView(m_renderTargets[n].Get(), NULL, rtvHandle);
-		rtvHandle.ptr += m_rtvDescriptorSize;
+		if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_directCommandAllocators[n])))) {
+			OutputDebugString("-------------------------Failed to create direct command allocator\n");
+		}
+	}
+	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&m_copyCommandAllocator)))) {
+		OutputDebugString("-------------------------Failed to create copy command allocator\n");
 	}
 
-	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocator)))) {
-		OutputDebugString("-------------------------Failed to create Command Allocator\n");
+	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_directCommandList)))) {
+		OutputDebugString("-------------------------Failed to create direct command list\n");
 	}
+	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_COPY, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_copyCommandList)))) {
+		OutputDebugString("-------------------------Failed to create copy command list\n");
+	}
+	for (UINT n = 0; n < D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES; ++n) {
+		m_descriptorSizes[n] = m_device->GetDescriptorHandleIncrementSize((D3D12_DESCRIPTOR_HEAP_TYPE)n);
+	}
+
+	for (UINT n = 0; n < FrameCount; ++n) {
+		ComPtr<ID3D12DescriptorHeap>& rtvDescriptorHeap = m_rtvDescriptorHeaps[n];
+		D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+		rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		rtvHeapDesc.NumDescriptors = FrameCount;
+		rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		if (FAILED(m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvDescriptorHeap)))) {
+			OutputDebugString("-------------------------Failed to create rtv descriptor heap.\n");
+		}
+		RenderTarget& renderTarget = m_renderTargets[n];
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvDescriptor = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		renderTarget.texture = m_swapChainBuffers[n];
+		renderTarget.viewDescriptor = rtvDescriptor;
+		m_device->CreateRenderTargetView(m_swapChainBuffers[n].Get(), nullptr, rtvDescriptor);
+	}
+
+	if (FAILED(m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr))) {
+		OutputDebugString("-------------------------Failed to reset copy command list\n");
+	}
+	
+	std::vector<ComPtr<ID3D12Resource> > stagingResources;
+	stagingResources.reserve(256);
+
+
+	for (auto& gltfBuffer : gltfModel.buffers) {
+		ComPtr<ID3D12Resource> dstBuffer;
+		
+		D3D12_HEAP_PROPERTIES heapProperties = {};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+		heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+		D3D12_RESOURCE_DESC resourceDesc = {};
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		resourceDesc.Alignment = 0;
+		resourceDesc.Width = gltfBuffer.data.size();
+		resourceDesc.Height = 1;
+		resourceDesc.DepthOrArraySize = 1;
+		resourceDesc.MipLevels = 1;
+		resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+		resourceDesc.SampleDesc = { 1, 0 };
+		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		if (FAILED(m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&dstBuffer)))) {
+			OutputDebugString("-------------------------Failed to create destination buffer\n");
+		}
+		m_buffers.push_back(dstBuffer);
+
+
+		ComPtr<ID3D12Resource> srcBuffer;
+		heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		if (FAILED(m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&srcBuffer)))) {
+			OutputDebugString("-------------------------Failed to create source buffer\n");
+		}
+		stagingResources.push_back(srcBuffer);
+
+		void* data;
+		if (FAILED(srcBuffer->Map(0, nullptr, &data))) {
+			OutputDebugString("-------------------------Failed to map source buffer\n");
+		}
+		memcpy(data, &gltfBuffer.data[0], gltfBuffer.data.size());
+		m_copyCommandList->CopyBufferRegion(dstBuffer.Get(), 0, srcBuffer.Get(), 0, gltfBuffer.data.size());
+	}
+
+	for (auto& gltfImage : gltfModel.images) {
+		ComPtr<ID3D12Resource> dstTexture;
+		{
+			D3D12_HEAP_PROPERTIES heapProperties = {};
+			heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+			heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+			D3D12_RESOURCE_DESC resourceDesc = {};
+			resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+			resourceDesc.Alignment = 0;
+			resourceDesc.Width = gltfImage.width;
+			resourceDesc.Height = gltfImage.height;
+			resourceDesc.DepthOrArraySize = 1;
+			resourceDesc.MipLevels = 1;
+			resourceDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			resourceDesc.SampleDesc = { 1, 0 };
+			resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+			resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		}
+	}
+
+	m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
 
 	D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionsedRootSignitureDesc = {};
 	versionsedRootSignitureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -282,9 +381,6 @@ void Renderer::Init() {
 		OutputDebugString("-------------------------Failed to create pipeline state object\n");
 	}
 
-	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_commandList)))) {
-		OutputDebugString("-------------------------Failed to create command list\n");
-	}
 
 	Vertex triangleVertices[] =
 	{
@@ -333,66 +429,65 @@ void Renderer::Init() {
 	m_vertexBufferView.BufferLocation = m_vertexBuffer->GetGPUVirtualAddress();
 	m_vertexBufferView.StrideInBytes = sizeof(Vertex);
 	m_vertexBufferView.SizeInBytes = vertexBufferSize;
+}
 
-	if (FAILED(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) {
-		OutputDebugString("-------------------------Failed to create fence\n");
+void Renderer::Update() {
+	if (m_directFence->GetCompletedValue() < m_directFenceValue) {
+		auto event = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+		m_directFence->SetEventOnCompletion(m_directFenceValue, event);
+		WaitForSingleObject(event, INFINITE);
+		CloseHandle(event);
 	}
-
-	m_fenceValue = 1;
-	m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-	if (m_fenceEvent == nullptr) {
-		OutputDebugString("-------------------------Failed to create event for fence\n");
-	}
+	// TODO: Camera
 }
 
 void Renderer::Render() {
-	if (FAILED(m_commandAllocator->Reset())) {
+	if (FAILED(m_directCommandAllocators[0]->Reset())) {
 		OutputDebugString("--------------------------Failed to reset command allocator\n");
 	}
 
-	if (FAILED(m_commandList->Reset(m_commandAllocator.Get(), m_pipelineState.Get()))) {
+	if (FAILED(m_directCommandList->Reset(m_directCommandAllocators[0].Get(), m_pipelineState.Get()))) {
 		OutputDebugString("--------------------------Failed to rest command list\n");
 	}
 
-	m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
-	m_commandList->RSSetViewports(1, &m_viewport);
-	m_commandList->RSSetScissorRects(1, &m_scissorRect);
+	m_directCommandList->SetGraphicsRootSignature(m_rootSignature.Get());
+	m_directCommandList->RSSetViewports(1, &m_viewport);
+	m_directCommandList->RSSetScissorRects(1, &m_scissorRect);
 
 	D3D12_RESOURCE_BARRIER renderTargetBarrier = {};
 	renderTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	renderTargetBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	renderTargetBarrier.Transition.pResource = m_renderTargets[m_frameIndex].Get();
+	renderTargetBarrier.Transition.pResource = m_renderTargets[m_frameIndex].texture.Get();
 	renderTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	renderTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
 	renderTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	m_commandList->ResourceBarrier(1, &renderTargetBarrier);
+	m_directCommandList->ResourceBarrier(1, &renderTargetBarrier);
 
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-	rtvHandle.ptr += m_frameIndex * m_rtvDescriptorSize;
-	m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvDescriptorHeaps[m_frameIndex]->GetCPUDescriptorHandleForHeapStart();
+	m_directCommandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
 	const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-	m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
-	m_commandList->DrawInstanced(3, 1, 0, 0);
+	m_directCommandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+	m_directCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_directCommandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+	m_directCommandList->DrawInstanced(3, 1, 0, 0);
 
 	D3D12_RESOURCE_BARRIER presentTargetBarrier = {};
 	presentTargetBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	presentTargetBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	presentTargetBarrier.Transition.pResource = m_renderTargets[m_frameIndex].Get();
+	presentTargetBarrier.Transition.pResource = m_renderTargets[m_frameIndex].texture.Get();
 	presentTargetBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 	presentTargetBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	presentTargetBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-	m_commandList->ResourceBarrier(1, &presentTargetBarrier);
+	m_directCommandList->ResourceBarrier(1, &presentTargetBarrier);
 
-	if (FAILED(m_commandList->Close())) {
+	if (FAILED(m_directCommandList->Close())) {
 		OutputDebugString("-------------------------Failed to close command list\n");
 	}
 
-	ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
-	m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+	ID3D12CommandList* ppCommandLists[] = { m_directCommandList.Get() };
+	m_directCommandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 	
 	DXGI_PRESENT_PARAMETERS presentParameters = {};
 	presentParameters.DirtyRectsCount = 0;
@@ -400,15 +495,15 @@ void Renderer::Render() {
 		OutputDebugString("-------------------------Failed to present swap chain\n");
 	}
 
-	const UINT64 fence = m_fenceValue;
-	if (FAILED(m_commandQueue->Signal(m_fence.Get(), fence))) {
+	const UINT64 fence = m_directFenceValue;
+	if (FAILED(m_directCommandQueue->Signal(m_directFence.Get(), fence))) {
 		OutputDebugString("-------------------------Failed to signal from command queue\n");
 	}
-	m_fenceValue++;
+	m_directFenceValue++;
 
-	if (m_fence->GetCompletedValue() < fence) {
-		m_fence->SetEventOnCompletion(fence, m_fenceEvent);
-		WaitForSingleObject(m_fenceEvent, INFINITE);
+	if (m_directFence->GetCompletedValue() < fence) {
+		m_directFence->SetEventOnCompletion(fence, m_directFenceEvent);
+		WaitForSingleObject(m_directFenceEvent, INFINITE);
 	}
 
 	m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
