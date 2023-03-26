@@ -30,6 +30,9 @@ public:
 	void SetWindowHandle(HWND hWnd) { m_hWnd = hWnd; }
 
 private:
+
+	uint64_t alignPow2(uint64_t value, uint64_t alignement);
+
 	static const UINT FrameCount = 2;
 
 	tinygltf::TinyGLTF gltfContext;
@@ -45,14 +48,27 @@ private:
 		D3D12_CPU_DESCRIPTOR_HANDLE viewDescriptor;
 	};
 
+	struct TextureInfo {
+		int32_t textureIndex;
+		int32_t samplerIndex;
+	};
+
+	struct PBRMetallicRoughness {
+		DirectX::XMFLOAT4 baseColorFactor;
+		TextureInfo baseColorTexture;
+		float metallicFactor;
+		float roughnessFactor;
+		TextureInfo metallicRoughnessTexture;
+	};
+
 	struct Material {
 		std::string name;
 		D3D12_BLEND_DESC blendDesc;
 		D3D12_RASTERIZER_DESC rasterizerDesc;
-		ComPtr<ID3D12Resource> pBuffer;
-		void* pBufferData;
-		ComPtr<ID3D12DescriptorHeap> pSRVDescriptorHeap;
-		ComPtr<ID3D12DescriptorHeap> pSamplerDescriptorHeap;
+		ComPtr<ID3D12Resource> buffer;
+		void* bufferData;
+		ComPtr<ID3D12DescriptorHeap> SRVDescriptorHeap;
+		ComPtr<ID3D12DescriptorHeap> samplerDescriptorHeap;
 	};
 
 	struct Attribute {
@@ -125,7 +141,6 @@ private:
 
 	ComPtr<ID3D12Resource2> m_vertexBuffer;
 	D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView = { 0, 0, 0 };
-	ComPtr<ID3D12Resource2> m_texture;
 
 	D3D12_VIEWPORT m_viewport;
 	D3D12_RECT m_scissorRect;

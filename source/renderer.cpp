@@ -61,6 +61,10 @@ Renderer::Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInsta
 Renderer::~Renderer() {
 }
 
+uint64_t Renderer::alignPow2(uint64_t value, uint64_t alignment) {
+	return (value + alignment - 1) & ~(alignment - 1);
+}
+
 void Renderer::Init() {
 	UINT dxgiFactoryFlags = DXGI_CREATE_FACTORY_DEBUG;
 
@@ -180,14 +184,14 @@ void Renderer::Init() {
 	if (FAILED(m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr))) {
 		OutputDebugString("-------------------------Failed to reset copy command list\n");
 	}
-	
+
 	std::vector<ComPtr<ID3D12Resource> > stagingResources;
 	stagingResources.reserve(256);
 
 
 	for (auto& gltfBuffer : gltfModel.buffers) {
 		ComPtr<ID3D12Resource> dstBuffer;
-		
+
 		D3D12_HEAP_PROPERTIES heapProperties = {};
 		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 		heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
@@ -225,26 +229,298 @@ void Renderer::Init() {
 		m_copyCommandList->CopyBufferRegion(dstBuffer.Get(), 0, srcBuffer.Get(), 0, gltfBuffer.data.size());
 	}
 
-	for (auto& gltfImage : gltfModel.images) {
+	for (tinygltf::Image& gltfImage : gltfModel.images) {
 		ComPtr<ID3D12Resource> dstTexture;
-		{
-			D3D12_HEAP_PROPERTIES heapProperties = {};
-			heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
-			heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-			heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 
-			D3D12_RESOURCE_DESC resourceDesc = {};
-			resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-			resourceDesc.Alignment = 0;
-			resourceDesc.Width = gltfImage.width;
-			resourceDesc.Height = gltfImage.height;
-			resourceDesc.DepthOrArraySize = 1;
-			resourceDesc.MipLevels = 1;
-			resourceDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-			resourceDesc.SampleDesc = { 1, 0 };
-			resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-			resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+		D3D12_HEAP_PROPERTIES heapProperties = {};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+		heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+		D3D12_RESOURCE_DESC resourceDesc = {};
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDesc.Alignment = 0;
+		resourceDesc.Width = gltfImage.width;
+		resourceDesc.Height = gltfImage.height;
+		resourceDesc.DepthOrArraySize = 1;
+		resourceDesc.MipLevels = 1;
+		resourceDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		resourceDesc.SampleDesc = { 1, 0 };
+		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		if (FAILED(m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&dstTexture)))) {
+			OutputDebugString("-------------------------Failed to create destination image\n");
 		}
+		m_textures.push_back(dstTexture);
+
+		D3D12_RESOURCE_DESC dstTextureDesc = dstTexture->GetDesc();
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+		UINT rowCount;
+		UINT64 rowSize;
+		UINT64 size;
+		m_device->GetCopyableFootprints(&dstTextureDesc, 0, 1, 0, &footprint, &rowCount, &rowSize, &size);
+
+		ComPtr<ID3D12Resource> srcBuffer;
+		heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		resourceDesc.Width = size;
+		resourceDesc.Height = 1;
+		resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		if(FAILED(m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&srcBuffer)))){
+			OutputDebugString("-------------------------Failed to create source image buffer\n");
+		}
+		stagingResources.push_back(srcBuffer);
+
+		void* data;
+		if (FAILED(srcBuffer->Map(0, nullptr, &data))) {
+			OutputDebugString("-------------------------Failed to map source image buffer\n");
+		}
+		for (UINT rowIndex = 0; rowIndex < rowCount; ++rowIndex) {
+			memcpy(static_cast<uint8_t*>(data) + rowSize * rowIndex, &gltfImage.image[0] + gltfImage.width * gltfImage.component * rowIndex, gltfImage.width * gltfImage.component);
+		}
+		D3D12_TEXTURE_COPY_LOCATION dstCopyLocation = {};
+		dstCopyLocation.pResource = dstTexture.Get();
+		dstCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		dstCopyLocation.SubresourceIndex = 0;
+
+		D3D12_TEXTURE_COPY_LOCATION srcCopyLocation = {};
+		srcCopyLocation.pResource = srcBuffer.Get();
+		srcCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		srcCopyLocation.PlacedFootprint = footprint;
+
+		m_copyCommandList->CopyTextureRegion(&dstCopyLocation, 0, 0, 0, &srcCopyLocation, nullptr);
+	}
+
+	if (FAILED(m_copyCommandList->Close())) {
+		OutputDebugString("-------------------------Failed to close copy command list\n");
+	}
+
+	ID3D12CommandList* copyCommandLists[] = {m_copyCommandList.Get()};
+	m_copyCommandQueue->ExecuteCommandLists(_countof(copyCommandLists), copyCommandLists);
+	m_copyCommandQueue->Signal(m_copyFence.Get(), ++m_copyFenceValue);
+
+	for (tinygltf::Sampler& gltfSampler : gltfModel.samplers) {
+		D3D12_SAMPLER_DESC samplerDesc = {};
+		switch (gltfSampler.minFilter) {
+		case TINYGLTF_TEXTURE_FILTER_NEAREST:
+			if (gltfSampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST)
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+			else
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_LINEAR:
+			if (gltfSampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST)
+				samplerDesc.Filter = D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT;
+			else
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
+			if (gltfSampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST)
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+			else
+				samplerDesc.Filter = D3D12_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
+			if (gltfSampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST)
+				samplerDesc.Filter = D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT;
+			else
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+			if (gltfSampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST)
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR;
+			else
+				samplerDesc.Filter = D3D12_FILTER_MIN_POINT_MAG_MIP_LINEAR;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+			if (gltfSampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST)
+				samplerDesc.Filter = D3D12_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR;
+			else
+				samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+			break;
+		default:
+			samplerDesc.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+			break;
+		}
+
+		auto getTextureAddress = [](int wrap) {
+			switch (wrap) {
+			case TINYGLTF_TEXTURE_WRAP_REPEAT:
+				return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+			case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
+				return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+			case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
+				return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
+			default:
+				OutputDebugString("-------------------------Invalide wrap mode in gltf file\n");
+				return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+			}
+		};
+
+		samplerDesc.AddressU = getTextureAddress(gltfSampler.wrapS);
+		samplerDesc.AddressV = getTextureAddress(gltfSampler.wrapT);
+		samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplerDesc.MaxLOD = 256;
+
+		m_samplerDescs.push_back(samplerDesc);
+	}
+
+	for (tinygltf::Material gltfMaterial : gltfModel.materials) {
+		Material material = {};
+		material.name = gltfMaterial.name;
+
+		D3D12_BLEND_DESC& blendDesc = material.blendDesc;
+		if (gltfMaterial.alphaMode == "BLEND") {
+			blendDesc.RenderTarget[0].BlendEnable = true;
+			blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+			blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+			blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+			blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+			blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+			blendDesc.RenderTarget[0].LogicOp = D3D12_LOGIC_OP_NOOP;
+		}
+		else if (gltfMaterial.alphaMode == "MASK") {
+			OutputDebugString("--------------------- MASK alpha mode is not support but was specified in the gltf file\n");
+		}
+
+		blendDesc.RenderTarget[0].RenderTargetWriteMask =
+			D3D12_COLOR_WRITE_ENABLE_ALL;
+
+		D3D12_RASTERIZER_DESC& rasterizerDesc = material.rasterizerDesc;
+		rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
+
+		if (gltfMaterial.doubleSided) {
+			rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
+		}
+		else {
+			rasterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
+		}
+
+		rasterizerDesc.FrontCounterClockwise = true;
+		rasterizerDesc.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+		rasterizerDesc.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+		rasterizerDesc.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+		rasterizerDesc.DepthClipEnable = false;
+		rasterizerDesc.MultisampleEnable = false;
+		rasterizerDesc.AntialiasedLineEnable = false;
+		rasterizerDesc.ForcedSampleCount = 0;
+		rasterizerDesc.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+		auto& buffer = material.buffer;
+		auto& bufferData = material.bufferData;
+
+		D3D12_HEAP_PROPERTIES heapProperties = {};
+		heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+		D3D12_RESOURCE_DESC resourceDesc = {};
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		resourceDesc.Width = alignPow2(sizeof(PBRMetallicRoughness), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+		resourceDesc.Height = 1;
+		resourceDesc.DepthOrArraySize = 1;
+		resourceDesc.MipLevels = 1;
+		resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+		resourceDesc.SampleDesc = { 1, 0 };
+		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		if (FAILED(m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer)))) {
+			OutputDebugString("---------------------Failed to create commited resource for pbr descriptor.\n");
+		}
+		if (FAILED(buffer->Map(0, nullptr, &bufferData))) {
+			OutputDebugString("---------------------Failed to map pbr buffer descriptor\n");
+		};
+
+		auto& SRVDescriptorHeap = material.SRVDescriptorHeap;
+		D3D12_DESCRIPTOR_HEAP_DESC descriptorHeapDesc = {};
+
+		descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		descriptorHeapDesc.NumDescriptors = 5;
+		descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+		if (FAILED(m_device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&SRVDescriptorHeap)))) {
+			OutputDebugString("---------------------Failed to crreate descriptor heap for pbr material.\n");
+		}
+
+		auto& samplerDescriptorHeap = material.samplerDescriptorHeap;
+		descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+
+		if (FAILED(m_device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&samplerDescriptorHeap)))) {
+			OutputDebugString("---------------------Failed to crreate sampler heap for pbr material.\n");
+		}
+
+		auto& gltfPBRMetallicRoughness = gltfMaterial.pbrMetallicRoughness;
+		auto PBRMetallicRoughness =
+			static_cast<Renderer::PBRMetallicRoughness*>(bufferData);
+
+		auto& baseColorFactor = PBRMetallicRoughness->baseColorFactor;
+
+		baseColorFactor.x =
+			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[0]);
+		baseColorFactor.y =
+			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[1]);
+		baseColorFactor.z =
+			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[2]);
+		baseColorFactor.w =
+			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[3]);
+
+		auto& gltfBaseColorTexture = gltfPBRMetallicRoughness.baseColorTexture;
+		auto& baseColorTexture = PBRMetallicRoughness->baseColorTexture;
+		if (gltfBaseColorTexture.index >= 0) {
+			baseColorTexture.textureIndex = 0;
+			baseColorTexture.samplerIndex = 0;
+		}
+		else {
+			baseColorTexture.textureIndex = -1;
+			baseColorTexture.samplerIndex = -1;
+		}
+		PBRMetallicRoughness->metallicFactor =
+			static_cast<float>(gltfPBRMetallicRoughness.metallicFactor);
+		PBRMetallicRoughness->roughnessFactor =
+			static_cast<float>(gltfPBRMetallicRoughness.roughnessFactor);
+
+		auto& gltfMetallicRoughnessTexture = gltfPBRMetallicRoughness.metallicRoughnessTexture;
+		auto& metallicRoughnessTexture = PBRMetallicRoughness->metallicRoughnessTexture;
+		if (gltfMetallicRoughnessTexture.index >= 0) {
+			metallicRoughnessTexture.textureIndex = 1;
+			metallicRoughnessTexture.samplerIndex = 1;
+		}
+		else {
+			metallicRoughnessTexture.textureIndex = -1;
+			metallicRoughnessTexture.samplerIndex = -1;
+		}
+		auto srvDescriptor = SRVDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		auto samplerDescriptor = samplerDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		if (gltfBaseColorTexture.index >= 0) {
+			auto& gltfTexture = gltfModel.textures[gltfBaseColorTexture.index];
+			auto texture = m_textures[gltfTexture.source].Get();
+			m_device->CreateShaderResourceView(texture, nullptr, srvDescriptor);
+			auto& samplerDesc = m_samplerDescs[gltfTexture.sampler];
+			m_device->CreateSampler(&samplerDesc, samplerDescriptor);
+		}
+		srvDescriptor.ptr +=
+			m_descriptorSizes[D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV];
+		samplerDescriptor.ptr +=
+			m_descriptorSizes[D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER];
+		auto& glTFMetallicRoughnessTexture = gltfPBRMetallicRoughness.metallicRoughnessTexture;
+		if (gltfMetallicRoughnessTexture.index >= 0) {
+			auto& gltfTexture = gltfModel.textures[gltfMetallicRoughnessTexture.index];
+			auto texture = m_textures[gltfTexture.source].Get();
+			m_device->CreateShaderResourceView(texture, nullptr, srvDescriptor);
+
+			auto& samplerDesc = m_samplerDescs[gltfTexture.sampler];
+			m_device->CreateSampler(&samplerDesc, samplerDescriptor);
+		}
+		m_materials.push_back(material);
+	}
+
+	if (m_copyFence->GetCompletedValue() < m_copyFenceValue) {
+		HANDLE event = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+		m_copyFence->SetEventOnCompletion(m_copyFenceValue, event);
+		WaitForSingleObject(event, INFINITE);
+		CloseHandle(event);
 	}
 
 	m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
@@ -272,12 +548,17 @@ void Renderer::Init() {
 
 	UINT compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 
-	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, nullptr))) {
+	ComPtr<ID3DBlob> errorMessage;
+	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errorMessage))) {
 		OutputDebugString("------------------------Failed to compile vertex shader\n");
+		char* errorString = static_cast<char*>(errorMessage->GetBufferPointer());
+		OutputDebugString(errorString);
 	}
 
-	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, nullptr))) {
+	if (FAILED(D3DCompileFromFile(m_shaderPath.c_str(), nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errorMessage))) {
 		OutputDebugString("------------------------Failed to compile pixel shader\n");
+		char* errorString = static_cast<char*>(errorMessage->GetBufferPointer());
+		OutputDebugString(errorString);
 	}
 
 	D3D12_SHADER_BYTECODE vsByteCode = {};
@@ -345,14 +626,12 @@ void Renderer::Init() {
 	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+		{ "COLOR", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
 	};
 
 	DXGI_SAMPLE_DESC sampleDesc = {};
 	sampleDesc.Count = 1;
 	sampleDesc.Quality = 0;
-
-
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
 	psoDesc.pRootSignature = m_rootSignature.Get();
