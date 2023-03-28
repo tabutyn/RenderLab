@@ -20,6 +20,7 @@ LRESULT WindowProc(_In_ HWND hWnd, _In_ UINT uMsg, _In_ WPARAM wParam, _In_ LPAR
 	return 0;
 	case WM_PAINT:
 	{
+		renderer->Update(renderer->GetDeltaTime());
 		renderer->Render();
 	}
 	return 0;
@@ -30,20 +31,20 @@ LRESULT WindowProc(_In_ HWND hWnd, _In_ UINT uMsg, _In_ WPARAM wParam, _In_ LPAR
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int nCmdShow)
 {
-	Renderer renderer = Renderer(600, 400, L"RenderLab", hInstance);
-	WNDCLASSEXW windowClass = { 0 };
+	Renderer renderer = Renderer(600, 400, "RenderLab", hInstance);
+	WNDCLASSEXA windowClass = { 0 };
 	windowClass.cbSize = sizeof(WNDCLASSEX);
 	windowClass.style = CS_HREDRAW | CS_VREDRAW;
 	windowClass.lpfnWndProc = WindowProc;
 	windowClass.hInstance = hInstance;
 	windowClass.hCursor = LoadCursorA(NULL, IDC_ARROW);
-	windowClass.lpszClassName = L"RenderLabWindowClass";
-	RegisterClassExW(&windowClass);
+	windowClass.lpszClassName = "RenderLabWindowClass";
+	RegisterClassExA(&windowClass);
 
 	RECT windowRect = { 0, 0, renderer.GetWidth(), renderer.GetHeight()};
 	AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
-	HWND hWnd = CreateWindowExW(
+	HWND hWnd = CreateWindowExA(
 		0,
 		windowClass.lpszClassName,
 		renderer.GetTitle(),

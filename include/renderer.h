@@ -4,29 +4,33 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <DirectXMath.h>
+#include <DirectXColors.h>
 #include <D3Dcompiler.h>
 #include <cmath>
+#include <chrono>
 #include "tiny_gltf.h"
 #include "json.hpp"
-
-enum RenderPassType { RENDER_PASS_TYPE_PRESENT = 0, RENDER_PASS_TYPE_COUNT };
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
 class Renderer {
 public:
-	Renderer(UINT width, UINT height, std::wstring title, HINSTANCE hInstance);
+	Renderer(UINT width, UINT height, std::string title, HINSTANCE hInstance);
 	~Renderer();
 
 	void Init();
-	void Update();
+	void Update(double_t deltaTime);
+	void DrawNode(uint64_t nodeIndex);
 	void Render();
 	void Destroy();
 
 	LONG GetWidth() const { return m_width; }
 	LONG GetHeight() const { return m_height; }
-	const WCHAR* GetTitle() const { return m_title.c_str(); }
+
+	double_t GetDeltaTime();
+
+	const CHAR* GetTitle() const { return m_title.c_str(); }
 	void SetWindowHandle(HWND hWnd) { m_hWnd = hWnd; }
 
 private:
@@ -35,8 +39,7 @@ private:
 
 	static const UINT FrameCount = 2;
 
-	tinygltf::TinyGLTF gltfContext;
-	tinygltf::Model gltfModel;
+	tinygltf::Model m_gltfModel;
 
 	struct Vertex {
 		XMFLOAT3 position;
@@ -83,9 +86,9 @@ private:
 		D3D12_PRIMITIVE_TOPOLOGY primitiveTopology;
 		D3D12_INDEX_BUFFER_VIEW indexBufferView;
 		uint32_t indexCount;
-		Material* pMaterial;
-		ComPtr<ID3D12RootSignature> pRootSignature;
-		ComPtr<ID3D12PipelineState> pPipelineState;
+		Material* material;
+		ComPtr<ID3D12RootSignature> rootSignature;
+		ComPtr<ID3D12PipelineState> pipelineState;
 	};
 
 	struct Mesh {
@@ -135,25 +138,18 @@ private:
 	std::vector<ComPtr<ID3D12Resource>> m_nodeBuffers;
 	ComPtr<ID3D12Resource> m_cameraBuffer;
 
-	ComPtr<ID3D12RootSignature> m_rootSignature;
-	ComPtr<ID3D12DescriptorHeap> m_srvHeap;
-	ComPtr<ID3D12PipelineState> m_pipelineState;
-
-	ComPtr<ID3D12Resource2> m_vertexBuffer;
-	D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView = { 0, 0, 0 };
-
 	D3D12_VIEWPORT m_viewport;
 	D3D12_RECT m_scissorRect;
-
-	UINT m_frameIndex = 0;
 
 	HINSTANCE m_hInstance = 0;
 	HWND m_hWnd = 0;
 	LONG m_width;
 	LONG m_height;
 	FLOAT m_aspectRatio;
-	std::wstring m_title;
-	std::wstring m_moduleDir;
-	std::wstring m_shaderPath;
-	std::wstring m_modelPath;
+	std::string m_title;
+	std::chrono::milliseconds currentFrameTime;
+	std::chrono::milliseconds lastFrameTime;
+	std::string m_vertexShaderPath;
+	std::string m_pixelShaderPath;
+	std::string m_grayPixelShaderPath;
 };
