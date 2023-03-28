@@ -24,7 +24,7 @@ Renderer::Renderer(UINT width, UINT height, std::string title, HINSTANCE hInstan
 {
 	m_aspectRatio = static_cast<FLOAT>(width) / static_cast<FLOAT>(height);
 	currentFrameTime = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
-	lastFrameTime = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
+	lastFrameTime = currentFrameTime;
 
 	m_viewport.TopLeftX = (FLOAT)0.0f;
 	m_viewport.TopLeftY = (FLOAT)0.0f;
@@ -100,7 +100,6 @@ void Renderer::Init() {
 		if (SUCCEEDED(enumerateAdapter->QueryInterface(IID_PPV_ARGS(&m_adapter)))) {
 			DXGI_ADAPTER_DESC3 adapterDescriptor;
 			m_adapter->GetDesc3(&adapterDescriptor);
-			UINT tom = (SIZE_T)1 << 30;
 			// Atleast 1GB of dedicated VRAM
 			if (adapterDescriptor.DedicatedVideoMemory > ((SIZE_T)1 << 30)) {
 				break;
@@ -166,7 +165,6 @@ void Renderer::Init() {
 	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&m_copyCommandAllocator)))) {
 		OutputDebugString("-------------------------Failed to create copy command allocator\n");
 	}
-
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_directCommandList)))) {
 		OutputDebugString("-------------------------Failed to create direct command list\n");
 	}
@@ -199,8 +197,6 @@ void Renderer::Init() {
 
 	std::vector<ComPtr<ID3D12Resource> > stagingResources;
 	stagingResources.reserve(256);
-
-
 	for (auto& gltfBuffer : m_gltfModel.buffers) {
 		ComPtr<ID3D12Resource> dstBuffer;
 
@@ -224,7 +220,6 @@ void Renderer::Init() {
 			OutputDebugString("-------------------------Failed to create destination buffer\n");
 		}
 		m_buffers.push_back(dstBuffer);
-
 
 		ComPtr<ID3D12Resource> srcBuffer;
 		heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -447,36 +442,27 @@ void Renderer::Init() {
 
 		auto& SRVDescriptorHeap = material.SRVDescriptorHeap;
 		D3D12_DESCRIPTOR_HEAP_DESC descriptorHeapDesc = {};
-
 		descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		descriptorHeapDesc.NumDescriptors = 5;
 		descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
 		if (FAILED(m_device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&SRVDescriptorHeap)))) {
 			OutputDebugString("---------------------Failed to crreate descriptor heap for pbr material.\n");
 		}
 
 		auto& samplerDescriptorHeap = material.samplerDescriptorHeap;
 		descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-
 		if (FAILED(m_device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&samplerDescriptorHeap)))) {
 			OutputDebugString("---------------------Failed to crreate sampler heap for pbr material.\n");
 		}
 
 		auto& gltfPBRMetallicRoughness = gltfMaterial.pbrMetallicRoughness;
-		auto PBRMetallicRoughness =
-			static_cast<Renderer::PBRMetallicRoughness*>(bufferData);
+		auto PBRMetallicRoughness = static_cast<Renderer::PBRMetallicRoughness*>(bufferData);
 
 		auto& baseColorFactor = PBRMetallicRoughness->baseColorFactor;
-
-		baseColorFactor.x =
-			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[0]);
-		baseColorFactor.y =
-			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[1]);
-		baseColorFactor.z =
-			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[2]);
-		baseColorFactor.w =
-			static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[3]);
+		baseColorFactor.x = static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[0]);
+		baseColorFactor.y = static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[1]);
+		baseColorFactor.z = static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[2]);
+		baseColorFactor.w = static_cast<float>(gltfPBRMetallicRoughness.baseColorFactor[3]);
 
 		auto& gltfBaseColorTexture = gltfPBRMetallicRoughness.baseColorTexture;
 		auto& baseColorTexture = PBRMetallicRoughness->baseColorTexture;
@@ -686,7 +672,7 @@ void Renderer::Init() {
 				rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 				rootParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 				rootParams[4].DescriptorTable = { 1, &samplerDescriptorRange };
-				rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+				rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 				D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
 				rootSignatureDesc.NumParameters = _countof(rootParams);
@@ -738,13 +724,13 @@ void Renderer::Init() {
 			}
 			else {
 				auto& rootSignature = primitive.rootSignature;
-				D3D12_ROOT_PARAMETER rootParams[2] = {
-					{D3D12_ROOT_PARAMETER_TYPE_CBV,
-					 {0, 0},	
-					 D3D12_SHADER_VISIBILITY_VERTEX},
-					{D3D12_ROOT_PARAMETER_TYPE_CBV,
-					 {1, 0},
-					 D3D12_SHADER_VISIBILITY_VERTEX}};
+				D3D12_ROOT_PARAMETER rootParams[2] = {};
+				rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+				rootParams[0].Descriptor = { 0, 0 };
+				rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+				rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+				rootParams[1].Descriptor = { 1, 0 };
+				rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
 				D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
 				rootSignatureDesc.NumParameters = _countof(rootParams);
@@ -755,7 +741,7 @@ void Renderer::Init() {
 				ComPtr<ID3DBlob> vertexShader;
 				ComPtr<ID3DBlob> pixelShader;
 				std::wstring vertexShaderPath(m_vertexShaderPath.begin(), m_vertexShaderPath.end());
-				std::wstring grayPixelShaderPath(m_pixelShaderPath.begin(), m_pixelShaderPath.end());
+				std::wstring grayPixelShaderPath(m_grayPixelShaderPath.begin(), m_grayPixelShaderPath.end());
 				compileShaderFromFile(vertexShaderPath.c_str(), &defines[0], "vs_5_1", &vertexShader);
 				compileShaderFromFile(grayPixelShaderPath.c_str(), &defines[0], "vs_5_1", &pixelShader);
 
@@ -824,7 +810,6 @@ void Renderer::Init() {
 		if (FAILED(buffer->Map(0, nullptr, &data))) {
 			OutputDebugString("---------------------------------Failed to map buffer\n");
 		}
-
 		if (gltfNode.matrix.empty()) {
 			XMStoreFloat4x4(static_cast<DirectX::XMFLOAT4X4*>(data),
 				XMMatrixIdentity());

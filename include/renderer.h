@@ -34,17 +34,9 @@ public:
 	void SetWindowHandle(HWND hWnd) { m_hWnd = hWnd; }
 
 private:
-
-	uint64_t alignPow2(uint64_t value, uint64_t alignement);
-
 	static const UINT FrameCount = 2;
 
-	tinygltf::Model m_gltfModel;
-
-	struct Vertex {
-		XMFLOAT3 position;
-		XMFLOAT2 uv;
-	};
+	uint64_t alignPow2(uint64_t value, uint64_t alignement);
 
 	struct RenderTarget {
 		ComPtr<ID3D12Resource> texture;
@@ -106,6 +98,8 @@ private:
 		DirectX::XMFLOAT4X4 VP;
 	};
 
+	tinygltf::Model m_gltfModel;
+
 	ComPtr<IDXGIFactory7> m_factory;
 	ComPtr<IDXGIAdapter4> m_adapter;
 	ComPtr<ID3D12Device8> m_device;
@@ -114,17 +108,17 @@ private:
 
 	ComPtr<ID3D12CommandQueue> m_directCommandQueue;
 	ComPtr<ID3D12Fence1> m_directFence;
-	UINT64 m_directFenceValue = 0;
-	HANDLE m_directFenceEvent = 0;
 	ComPtr<ID3D12CommandAllocator> m_directCommandAllocators[FrameCount];
 	ComPtr<ID3D12GraphicsCommandList> m_directCommandList;
+	UINT64 m_directFenceValue = 0;
+	HANDLE m_directFenceEvent = 0;
 
 	ComPtr<ID3D12CommandQueue> m_copyCommandQueue;
 	ComPtr<ID3D12Fence1> m_copyFence;
-	UINT64 m_copyFenceValue = 0;
-	HANDLE m_copyFenceEvent = 0;
 	ComPtr<ID3D12CommandAllocator> m_copyCommandAllocator;
 	ComPtr<ID3D12GraphicsCommandList> m_copyCommandList;
+	UINT64 m_copyFenceValue = 0;
+	HANDLE m_copyFenceEvent = 0;
 
 	UINT m_descriptorSizes[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 	ComPtr<ID3D12DescriptorHeap> m_rtvDescriptorHeaps[FrameCount];
