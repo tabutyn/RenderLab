@@ -16,7 +16,7 @@ using Microsoft::WRL::ComPtr;
 
 class Renderer {
 public:
-	Renderer(UINT width, UINT height, std::string title, HINSTANCE hInstance);
+	Renderer(UINT width, UINT height, std::string title);
 	~Renderer();
 
 	void Init();
@@ -31,15 +31,24 @@ public:
 	double_t GetDeltaTime();
 
 	const CHAR* GetTitle() const { return m_title.c_str(); }
-	void SetWindowHandle(HWND hWnd) { m_hWnd = hWnd; }
 
 private:
 	static const UINT FrameCount = 2;
+	UINT fIndex = 0;
+	UINT fCounter = 0;
 
 	uint64_t alignPow2(uint64_t value, uint64_t alignement);
 
 	struct RenderTarget {
 		ComPtr<ID3D12Resource> texture;
+		ComPtr<ID3D12Resource> dest;
+		D3D12_CLEAR_VALUE clearValue;
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint; 
+		UINT rowCount;
+		UINT64 rowSize;
+		UINT64 size;
+		D3D12_TEXTURE_COPY_LOCATION srcCopyLocation;
+		D3D12_TEXTURE_COPY_LOCATION dstCopyLocation;
 		D3D12_CPU_DESCRIPTOR_HANDLE viewDescriptor;
 	};
 
@@ -103,8 +112,7 @@ private:
 	ComPtr<IDXGIFactory7> m_factory;
 	ComPtr<IDXGIAdapter4> m_adapter;
 	ComPtr<ID3D12Device8> m_device;
-	ComPtr<IDXGISwapChain3> m_swapChain;
-	ComPtr<ID3D12Resource2> m_swapChainBuffers[FrameCount];
+	RenderTarget m_renderTargets[FrameCount];
 
 	ComPtr<ID3D12CommandQueue> m_directCommandQueue;
 	ComPtr<ID3D12Fence1> m_directFence;
@@ -115,14 +123,13 @@ private:
 
 	ComPtr<ID3D12CommandQueue> m_copyCommandQueue;
 	ComPtr<ID3D12Fence1> m_copyFence;
-	ComPtr<ID3D12CommandAllocator> m_copyCommandAllocator;
+	ComPtr<ID3D12CommandAllocator> m_copyCommandAllocator[FrameCount];
 	ComPtr<ID3D12GraphicsCommandList> m_copyCommandList;
 	UINT64 m_copyFenceValue = 0;
 	HANDLE m_copyFenceEvent = 0;
 
 	UINT m_descriptorSizes[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 	ComPtr<ID3D12DescriptorHeap> m_rtvDescriptorHeaps[FrameCount];
-	RenderTarget m_renderTargets[FrameCount];
 
 	std::vector<ComPtr<ID3D12Resource>> m_buffers;
 	std::vector<ComPtr<ID3D12Resource>> m_textures;
@@ -135,8 +142,9 @@ private:
 	D3D12_VIEWPORT m_viewport;
 	D3D12_RECT m_scissorRect;
 
-	HINSTANCE m_hInstance = 0;
-	HWND m_hWnd = 0;
+	float_t* outputFloatImage = nullptr;
+	uint8_t* outputCharImage = nullptr;
+
 	LONG m_width;
 	LONG m_height;
 	FLOAT m_aspectRatio;

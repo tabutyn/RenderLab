@@ -16,15 +16,17 @@
 using namespace Microsoft::WRL;
 using namespace std::chrono;
 
-Renderer::Renderer(UINT width, UINT height, std::string title, HINSTANCE hInstance) :
+Renderer::Renderer(UINT width, UINT height, std::string title) :
 	m_width(width),
 	m_height(height),
-	m_title(title),
-	m_hInstance(hInstance)
+	m_title(title)
 {
 	m_aspectRatio = static_cast<FLOAT>(width) / static_cast<FLOAT>(height);
 	currentFrameTime = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
 	lastFrameTime = currentFrameTime;
+
+	outputFloatImage = new float_t[width * height * 4];
+	outputCharImage = new uint8_t[width * height * 4];
 
 	m_viewport.TopLeftX = (FLOAT)0.0f;
 	m_viewport.TopLeftY = (FLOAT)0.0f;
@@ -131,39 +133,13 @@ void Renderer::Init() {
 		OutputDebugString("-------------------------Failed to create copy fence\n");
 	}
 
-	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-	swapChainDesc.Width = m_width;
-	swapChainDesc.Height = m_height;
-	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	swapChainDesc.Stereo = FALSE;
-	swapChainDesc.SampleDesc.Count = 1;
-	swapChainDesc.SampleDesc.Quality = 0;
-	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	swapChainDesc.BufferCount = FrameCount;
-	swapChainDesc.Scaling = DXGI_SCALING_NONE;
-	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-	swapChainDesc.Flags = 0;
-
-	ComPtr<IDXGISwapChain1> swapChain;
-	if (FAILED(m_factory->CreateSwapChainForHwnd(m_directCommandQueue.Get(), m_hWnd, &swapChainDesc, nullptr, nullptr, &swapChain))) {
-		OutputDebugString("-------------------------Failed to create swap chain\n");
-	}
-	if (FAILED(swapChain.As(&m_swapChain))) {
-		OutputDebugString("-------------------------Failed to cast IDXGISwapChain1 to IDXGISwapChain3\n");
-	}
-	m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER);
-
 	for (UINT n = 0; n < FrameCount; ++n) {
-		if (FAILED(m_swapChain->GetBuffer(n, IID_PPV_ARGS(&m_swapChainBuffers[n])))) {
-			OutputDebugString("-------------------------Failed to get swapChain buffer\n");
-		}
 		if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_directCommandAllocators[n])))) {
 			OutputDebugString("-------------------------Failed to create direct command allocator\n");
 		}
-	}
-	if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&m_copyCommandAllocator)))) {
-		OutputDebugString("-------------------------Failed to create copy command allocator\n");
+		if (FAILED(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&m_copyCommandAllocator[n])))) {
+			OutputDebugString("-------------------------Failed to create copy command allocator\n");
+		}
 	}
 	if (FAILED(m_device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&m_directCommandList)))) {
 		OutputDebugString("-------------------------Failed to create direct command list\n");
@@ -186,12 +162,59 @@ void Renderer::Init() {
 		}
 		RenderTarget& renderTarget = m_renderTargets[n];
 		D3D12_CPU_DESCRIPTOR_HANDLE rtvDescriptor = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-		renderTarget.texture = m_swapChainBuffers[n];
+		D3D12_HEAP_PROPERTIES heapProperties = {};
+		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+		heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		heapProperties.CreationNodeMask = 0;
+		heapProperties.VisibleNodeMask = 0;
+
+		D3D12_RESOURCE_DESC resourceDesc = {};
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		resourceDesc.Alignment = 0;
+		resourceDesc.Width = m_width;
+		resourceDesc.Height = m_height;
+		resourceDesc.DepthOrArraySize = 1;
+		resourceDesc.MipLevels = 1;
+		resourceDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		resourceDesc.SampleDesc = { 1, 0 };
+		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+		renderTarget.clearValue.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		renderTarget.clearValue.Color[0] = 0.0f;
+		renderTarget.clearValue.Color[1] = 0.1f;
+		renderTarget.clearValue.Color[2] = 0.2f;
+		renderTarget.clearValue.Color[3] = 1.0f;
+
+		m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COMMON, &renderTarget.clearValue, IID_PPV_ARGS(&renderTarget.texture));
 		renderTarget.viewDescriptor = rtvDescriptor;
-		m_device->CreateRenderTargetView(m_swapChainBuffers[n].Get(), nullptr, rtvDescriptor);
+		m_device->CreateRenderTargetView(renderTarget.texture.Get(), nullptr, rtvDescriptor);
+
+		D3D12_RESOURCE_DESC srcTextureDesc = renderTarget.texture->GetDesc();
+		m_device->GetCopyableFootprints(&srcTextureDesc, 0, 1, 0, &renderTarget.footprint, &renderTarget.rowCount, &renderTarget.rowSize, &renderTarget.size);
+
+		heapProperties.Type = D3D12_HEAP_TYPE_READBACK;
+		resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		resourceDesc.Width = renderTarget.size;
+		resourceDesc.Height = 1;
+		resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&renderTarget.dest));
+
+
+		renderTarget.srcCopyLocation.pResource = renderTarget.texture.Get();
+		renderTarget.srcCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		renderTarget.srcCopyLocation.SubresourceIndex = 0;
+
+		renderTarget.dstCopyLocation.pResource = renderTarget.dest.Get();
+		renderTarget.dstCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		renderTarget.dstCopyLocation.PlacedFootprint = renderTarget.footprint;
 	}
 
-	if (FAILED(m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr))) {
+	if (FAILED(m_copyCommandList->Reset(m_copyCommandAllocator[0].Get(), nullptr))) {
 		OutputDebugString("-------------------------Failed to reset copy command list\n");
 	}
 
@@ -715,7 +738,7 @@ void Renderer::Init() {
 					OutputDebugString("-------------------------Unsupported primitiveTopology\n");
 				}
 				pipelineStateDesc.NumRenderTargets = 1;
-				pipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+				pipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R32G32B32A32_FLOAT;
 				pipelineStateDesc.SampleDesc = { 1, 0 };
 				auto& pipelineState = primitive.pipelineState;
 				if (FAILED(m_device->CreateGraphicsPipelineState(&pipelineStateDesc, IID_PPV_ARGS(&pipelineState)))) {
@@ -772,7 +795,7 @@ void Renderer::Init() {
 					OutputDebugString("-------------------------Unsupported primitiveTopology\n");
 				}
 				pipelineStateDesc.NumRenderTargets = 1;
-				pipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+				pipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UINT;
 				pipelineStateDesc.SampleDesc = { 1, 0 };
 
 				auto& pipelineState = primitive.pipelineState;
@@ -852,13 +875,7 @@ void Renderer::Init() {
 	//todo: consume lightfield config file
 }
 
-void Renderer::Update(double deltaTime) {
-	if (m_directFence->GetCompletedValue() < m_directFenceValue) {
-		auto event = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
-		m_directFence->SetEventOnCompletion(m_directFenceValue, event);
-		WaitForSingleObject(event, INFINITE);
-		CloseHandle(event);
-	}
+void Renderer::Update(double_t deltaTime) {
 	void* data;
 	m_cameraBuffer->Map(0, nullptr, &data);
 
@@ -923,40 +940,91 @@ void Renderer::DrawNode(uint64_t nodeIndex) {
 }
 
 void Renderer::Render() {
-	const auto fIndex = m_swapChain->GetCurrentBackBufferIndex();
+	fIndex = (fIndex + 1) % FrameCount;
 	auto directCommandAllocator = m_directCommandAllocators[fIndex].Get();
+	auto copyCommandAllocator = m_copyCommandAllocator[fIndex].Get();
 	directCommandAllocator->Reset();
+	copyCommandAllocator->Reset();
 	m_directCommandList->Reset(directCommandAllocator, nullptr);
+	m_copyCommandList->Reset(copyCommandAllocator, nullptr);
 	m_directCommandList->RSSetViewports(1, &m_viewport);
 	m_directCommandList->RSSetScissorRects(1, &m_scissorRect);
 
 	auto& renderTarget = m_renderTargets[fIndex];
 	auto texture = renderTarget.texture.Get();
+	auto dest = renderTarget.dest.Get();
+	auto footprint = renderTarget.footprint;
 	auto rtvDescriptor = renderTarget.viewDescriptor;
 
 	D3D12_RESOURCE_BARRIER resourceBarrier = {};
 	resourceBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 	resourceBarrier.Transition.pResource = texture;
-	resourceBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+	resourceBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
 	resourceBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	m_directCommandList->ResourceBarrier(1, &resourceBarrier);
 
 	m_directCommandList->OMSetRenderTargets(1, &rtvDescriptor, false, nullptr);
-	m_directCommandList->ClearRenderTargetView(rtvDescriptor, Colors::Black, 0, nullptr);
+	m_directCommandList->ClearRenderTargetView(rtvDescriptor, renderTarget.clearValue.Color, 0, nullptr);
 
 	auto& scene = m_gltfModel.scenes[m_gltfModel.defaultScene];
 	for (auto nodeIndex : scene.nodes) {
 		DrawNode(nodeIndex);
 	}
+
 	resourceBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-	resourceBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+	resourceBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
 	m_directCommandList->ResourceBarrier(1, &resourceBarrier);
 	m_directCommandList->Close();
 
 	ID3D12CommandList* commandLists[] = {m_directCommandList.Get()};
 	m_directCommandQueue->ExecuteCommandLists(1, commandLists);
 	m_directCommandQueue->Signal(m_directFence.Get(), ++m_directFenceValue);
-	m_swapChain->Present(0, 0);
+
+	resourceBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+	resourceBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+	m_copyCommandList->ResourceBarrier(1, &resourceBarrier);
+
+	m_copyCommandList->CopyTextureRegion(&renderTarget.dstCopyLocation, 0, 0, 0, &renderTarget.srcCopyLocation, nullptr);
+
+	resourceBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+	resourceBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+	m_copyCommandList->ResourceBarrier(1, &resourceBarrier);
+	m_copyCommandList->Close();
+
+	ID3D12CommandList* copyCommandLists[] = { m_copyCommandList.Get() };
+
+	if (m_directFence->GetCompletedValue() < m_directFenceValue) {
+		auto event = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+		m_directFence->SetEventOnCompletion(m_directFenceValue, event);
+		WaitForSingleObject(event, INFINITE);
+		CloseHandle(event);
+	}
+	m_copyCommandQueue->ExecuteCommandLists(1, copyCommandLists);
+	m_copyCommandQueue->Signal(m_copyFence.Get(), ++m_copyFenceValue);
+	if (m_copyFence->GetCompletedValue() < m_copyFenceValue) {
+		auto event = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+		m_copyFence->SetEventOnCompletion(m_copyFenceValue, event);
+		WaitForSingleObject(event, INFINITE);
+		CloseHandle(event);
+	}
+
+	void* data;
+	if (FAILED(dest->Map(0, nullptr, &data))) {
+		OutputDebugString("-------------------------Failed to map dest image buffer\n");
+	}
+
+	for (UINT rowIndex = 0; rowIndex < renderTarget.rowCount; ++rowIndex) {
+		memcpy(reinterpret_cast<uint8_t*>(outputFloatImage) + rowIndex * m_width * 16, static_cast<uint8_t*>(data) + rowIndex * renderTarget.footprint.Footprint.RowPitch, m_width * 16);
+	}
+	for (UINT i = 0; i < m_width * m_height * 4; ++i) {
+		outputCharImage[i] = (uint8_t)(outputFloatImage[i]*255.0f);
+	}
+	std::string formated_name = std::format("output\\output{}.png", fCounter);
+	stbi_write_png(formated_name.c_str(), m_width, m_height, 4, outputCharImage, m_width * 4);
+	OutputDebugString("-----------------------------------wrote image ");
+	OutputDebugString(formated_name.c_str());
+	OutputDebugString("\n");
+	fCounter++;
 }
 
 void Renderer::Destroy() {
