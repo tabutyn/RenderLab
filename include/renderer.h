@@ -41,15 +41,17 @@ private:
 
 	struct RenderTarget {
 		ComPtr<ID3D12Resource> texture;
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvDescriptor = {};
+		ComPtr<ID3D12Resource> depthTexture;
+		D3D12_CPU_DESCRIPTOR_HANDLE dsvDescriptor = {};
 		ComPtr<ID3D12Resource> dest;
-		D3D12_CLEAR_VALUE clearValue;
-		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint; 
-		UINT rowCount;
-		UINT64 rowSize;
-		UINT64 size;
-		D3D12_TEXTURE_COPY_LOCATION srcCopyLocation;
-		D3D12_TEXTURE_COPY_LOCATION dstCopyLocation;
-		D3D12_CPU_DESCRIPTOR_HANDLE viewDescriptor;
+		D3D12_CLEAR_VALUE clearValue = {};
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+		UINT rowCount = 0;
+		UINT64 rowSize = 0;
+		UINT64 size = 0;
+		D3D12_TEXTURE_COPY_LOCATION srcCopyLocation = {};
+		D3D12_TEXTURE_COPY_LOCATION dstCopyLocation = {};
 	};
 
 	struct TextureInfo {
@@ -117,7 +119,7 @@ private:
 	ComPtr<ID3D12CommandQueue> m_directCommandQueue;
 	ComPtr<ID3D12Fence1> m_directFence;
 	ComPtr<ID3D12CommandAllocator> m_directCommandAllocators[FrameCount];
-	ComPtr<ID3D12GraphicsCommandList> m_directCommandList;
+	ComPtr<ID3D12GraphicsCommandList4> m_directCommandList;
 	UINT64 m_directFenceValue = 0;
 	HANDLE m_directFenceEvent = 0;
 
@@ -130,6 +132,8 @@ private:
 
 	UINT m_descriptorSizes[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 	ComPtr<ID3D12DescriptorHeap> m_rtvDescriptorHeaps[FrameCount];
+	ComPtr<ID3D12DescriptorHeap> m_dsvDescriptorHeaps[FrameCount];
+	D3D12_DEPTH_STENCIL_DESC dsDesc;
 
 	std::vector<ComPtr<ID3D12Resource>> m_buffers;
 	std::vector<ComPtr<ID3D12Resource>> m_textures;

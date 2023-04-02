@@ -25,6 +25,14 @@ Renderer::Renderer(UINT width, UINT height, std::string title) :
 	currentFrameTime = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
 	lastFrameTime = currentFrameTime;
 
+	for (UINT n = 0; n < FrameCount; n++) {
+		m_renderTargets[n].clearValue.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		m_renderTargets[n].clearValue.Color[0] = 0.0f;
+		m_renderTargets[n].clearValue.Color[1] = 0.1f;
+		m_renderTargets[n].clearValue.Color[2] = 0.2f;
+		m_renderTargets[n].clearValue.Color[3] = 1.0f;
+	}
+
 	outputFloatImage = new float_t[width * height * 4];
 	outputCharImage = new uint8_t[width * height * 4];
 
@@ -111,7 +119,12 @@ void Renderer::Init() {
 	if (FAILED(D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_12_2, IID_PPV_ARGS(&m_device)))) {
 		OutputDebugString("-------------------------Failed to create d3d12Device\n");
 	}
-	
+	D3D12_FEATURE_DATA_D3D12_OPTIONS5 featureData;
+	m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &featureData, sizeof(featureData));
+	if (featureData.RaytracingTier == D3D12_RAYTRACING_TIER_NOT_SUPPORTED) {
+		OutputDebugString("--------------------------Failed to create device with ray tracing support\n");
+	}
+
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -152,16 +165,24 @@ void Renderer::Init() {
 	}
 
 	for (UINT n = 0; n < FrameCount; ++n) {
+		RenderTarget& renderTarget = m_renderTargets[n];
 		ComPtr<ID3D12DescriptorHeap>& rtvDescriptorHeap = m_rtvDescriptorHeaps[n];
-		D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-		rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-		rtvHeapDesc.NumDescriptors = FrameCount;
-		rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-		if (FAILED(m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvDescriptorHeap)))) {
+		D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+		heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		heapDesc.NumDescriptors = FrameCount;
+		heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		if (FAILED(m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&rtvDescriptorHeap)))) {
 			OutputDebugString("-------------------------Failed to create rtv descriptor heap.\n");
 		}
-		RenderTarget& renderTarget = m_renderTargets[n];
-		D3D12_CPU_DESCRIPTOR_HANDLE rtvDescriptor = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		renderTarget.rtvDescriptor = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+
+		ComPtr<ID3D12DescriptorHeap>& dsvDescriptorHeap = m_dsvDescriptorHeaps[n];
+		heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+		if (FAILED(m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&dsvDescriptorHeap)))) {
+			OutputDebugString("-------------------------Failed to create rtv descriptor heap.\n");
+		}
+		renderTarget.dsvDescriptor = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+
 		D3D12_HEAP_PROPERTIES heapProperties = {};
 		heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
 		heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
@@ -181,15 +202,38 @@ void Renderer::Init() {
 		resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-		renderTarget.clearValue.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-		renderTarget.clearValue.Color[0] = 0.0f;
-		renderTarget.clearValue.Color[1] = 0.1f;
-		renderTarget.clearValue.Color[2] = 0.2f;
-		renderTarget.clearValue.Color[3] = 1.0f;
-
 		m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COMMON, &renderTarget.clearValue, IID_PPV_ARGS(&renderTarget.texture));
-		renderTarget.viewDescriptor = rtvDescriptor;
-		m_device->CreateRenderTargetView(renderTarget.texture.Get(), nullptr, rtvDescriptor);
+		m_device->CreateRenderTargetView(renderTarget.texture.Get(), nullptr, renderTarget.rtvDescriptor);
+
+		resourceDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		D3D12_CLEAR_VALUE depthOptimizedClearValue = {};
+		depthOptimizedClearValue.Format = DXGI_FORMAT_D32_FLOAT;
+		depthOptimizedClearValue.DepthStencil.Depth = 1.0f;
+		depthOptimizedClearValue.DepthStencil.Stencil = 0;
+
+		m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthOptimizedClearValue, IID_PPV_ARGS(&renderTarget.depthTexture));
+
+		D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+		dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+		m_device->CreateDepthStencilView(renderTarget.depthTexture.Get(), &dsvDesc, renderTarget.dsvDescriptor);
+
+		dsDesc.DepthEnable = true;
+		dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		dsDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+		dsDesc.StencilEnable = true;
+		dsDesc.StencilReadMask = 0xFF;
+		dsDesc.StencilWriteMask = 0xFF;
+		dsDesc.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+		dsDesc.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_INCR;
+		dsDesc.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+		dsDesc.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+		dsDesc.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+		dsDesc.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_DECR;
+		dsDesc.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+		dsDesc.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
 
 		D3D12_RESOURCE_DESC srcTextureDesc = renderTarget.texture->GetDesc();
 		m_device->GetCopyableFootprints(&srcTextureDesc, 0, 1, 0, &renderTarget.footprint, &renderTarget.rowCount, &renderTarget.rowSize, &renderTarget.size);
@@ -421,13 +465,12 @@ void Renderer::Init() {
 
 		D3D12_RASTERIZER_DESC& rasterizerDesc = material.rasterizerDesc;
 		rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
-
-		if (gltfMaterial.doubleSided) {
-			rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
-		}
-		else {
-			rasterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
-		}
+		rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
+//		if (gltfMaterial.doubleSided) {
+	//	}
+		//else {
+			//rasterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
+		//}
 
 		rasterizerDesc.FrontCounterClockwise = true;
 		rasterizerDesc.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
@@ -721,6 +764,7 @@ void Renderer::Init() {
 				pipelineStateDesc.BlendState = primitive.material->blendDesc;
 				pipelineStateDesc.SampleMask = UINT_MAX;
 				pipelineStateDesc.RasterizerState = primitive.material->rasterizerDesc;
+				pipelineStateDesc.DepthStencilState = dsDesc;
 				pipelineStateDesc.InputLayout = { inputElementDescs.data(), static_cast<UINT>(inputElementDescs.size()) };
 				switch (primitive.primitiveTopology) {
 				case D3D_PRIMITIVE_TOPOLOGY_POINTLIST:
@@ -739,6 +783,7 @@ void Renderer::Init() {
 				}
 				pipelineStateDesc.NumRenderTargets = 1;
 				pipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R32G32B32A32_FLOAT;
+				pipelineStateDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 				pipelineStateDesc.SampleDesc = { 1, 0 };
 				auto& pipelineState = primitive.pipelineState;
 				if (FAILED(m_device->CreateGraphicsPipelineState(&pipelineStateDesc, IID_PPV_ARGS(&pipelineState)))) {
@@ -778,6 +823,7 @@ void Renderer::Init() {
 				pipelineStateDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 				pipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
 				pipelineStateDesc.RasterizerState.FrontCounterClockwise = true;
+				pipelineStateDesc.DepthStencilState = dsDesc;
 				pipelineStateDesc.InputLayout = { inputElementDescs.data(), static_cast<UINT>(inputElementDescs.size()) };
 				switch (primitive.primitiveTopology) {
 				case D3D_PRIMITIVE_TOPOLOGY_POINTLIST:
@@ -869,7 +915,6 @@ void Renderer::Init() {
 
 	m_device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_cameraBuffer));
 
-	//todo: windowless
 	//todo: raytracing
 	//todo: output depth
 	//todo: consume lightfield config file
@@ -954,7 +999,8 @@ void Renderer::Render() {
 	auto texture = renderTarget.texture.Get();
 	auto dest = renderTarget.dest.Get();
 	auto footprint = renderTarget.footprint;
-	auto rtvDescriptor = renderTarget.viewDescriptor;
+	auto rtvDescriptor = renderTarget.rtvDescriptor;
+	auto dsvDescriptor = renderTarget.dsvDescriptor;
 
 	D3D12_RESOURCE_BARRIER resourceBarrier = {};
 	resourceBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -963,8 +1009,10 @@ void Renderer::Render() {
 	resourceBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	m_directCommandList->ResourceBarrier(1, &resourceBarrier);
 
-	m_directCommandList->OMSetRenderTargets(1, &rtvDescriptor, false, nullptr);
+	m_directCommandList->OMSetRenderTargets(1, &rtvDescriptor, false, &dsvDescriptor);
+	m_directCommandList->ClearDepthStencilView(renderTarget.dsvDescriptor, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 	m_directCommandList->ClearRenderTargetView(rtvDescriptor, renderTarget.clearValue.Color, 0, nullptr);
+
 
 	auto& scene = m_gltfModel.scenes[m_gltfModel.defaultScene];
 	for (auto nodeIndex : scene.nodes) {
